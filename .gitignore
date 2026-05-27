@@ -4,7 +4,12 @@
 /Tests/
 /TeXParserExample.md
 /AGENTS.md
-/.build
+/.build/*
+!/.build/wasm32-unknown-wasip1/
+/.build/wasm32-unknown-wasip1/*
+!/.build/wasm32-unknown-wasip1/debug/
+/.build/wasm32-unknown-wasip1/debug/*
+!/.build/wasm32-unknown-wasip1/debug/GradGame.wasm
 /Packages
 /.swiftpm/
 xcuserdata/
