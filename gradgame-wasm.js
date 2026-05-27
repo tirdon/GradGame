@@ -1,5 +1,5 @@
 (async () => {
-    const wasmPath = 'GradGame.wasm';
+    const wasmPath = '.build/wasm32-unknown-wasip1/debug/GradGame.wasm';
     const result = document.getElementById('wasm-add-result');
     let wasmExports = null;
 
