@@ -1,5 +1,5 @@
 (async () => {
-    const wasmPath = '.build/wasm32-unknown-wasip1/debug/GradGame.wasm';
+    const wasmPath = 'GradGame.wasm';
     const result = document.getElementById('wasm-add-result');
     let wasmExports = null;
 
@@ -47,7 +47,10 @@
         }
 
         const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1 };
-        const { instance } = await WebAssembly.instantiateStreaming(response, imports);
+        const responseCopy = response.clone();
+        const { instance } = await WebAssembly.instantiateStreaming(response, imports).catch(
+            async () => WebAssembly.instantiate(await responseCopy.arrayBuffer(), imports)
+        );
 
         wasmExports = instance.exports;
         window.gradGameWasm = wasmExports;
