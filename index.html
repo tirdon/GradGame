@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
+        <!-- Primary Meta Tags -->
+        <title>GradGame — The Ultimate College Graduation Simulator</title>
+        <meta name="title" content="GradGame — The Ultimate College Graduation Simulator">
+        <meta name="description" content="Embark on an epic collegiate adventure. highly interactive simulation game.">
+        <meta name="keywords" content="GradGame, interactive web game">
+        <meta name="author" content="GradGame Team">
+        <meta name="robots" content="index, follow">
+
+        <!-- Theme Color & Mobile Apps -->
+        <meta name="theme-color" content="#6366f1">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+        <!-- Favicon (Modern Self-Contained SVG) -->
+        <link rel="icon" type="image/svg+xml" href="data:image/svg+xml, <svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>🎓</text></svg>">
+
+        <!-- Premium Academic Typography (Google Fonts: EB Garamond & Lora) -->
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
+
+        <!-- Global Stylesheet -->
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+        <div class="card" id="session-new">
+            <canvas id="canvas-new"></canvas>
+            <div class="card-content">
+                <span class="card-icon">🎓</span>
+                <h2>New Adventure</h2>
+                <p>Start a new academic life and build your legacy.</p>
+                <output id="wasm-add-result" aria-live="polite">Loading Swift Wasm...</output>
+            </div>
+        </div>
+        <input class="card" id="session-load" type="text" placeholder="Enter session code...">
+
+        <!-- Dynamic Academic Particles Script -->
+        <script>
+            const canvas = document.getElementById('canvas-new');
+            const ctx = canvas.getContext('2d');
+            const card = document.getElementById('session-new');
+
+            function resizeCanvas() {
+                const rect = card.getBoundingClientRect();
+                canvas.width = rect.width;
+                canvas.height = rect.height;
+            }
+
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // Responsive observer to guarantee canvas adapts instantly on dynamic resizes
+            const observer = new ResizeObserver(() => resizeCanvas());
+            observer.observe(card);
+
+            const particles = [];
+            const particleCount = 45;
+
+            class Particle {
+                constructor() {
+                    this.reset();
+                }
+
+                reset() {
+                    this.x = Math.random() * canvas.width;
+                    this.y = Math.random() * canvas.height + canvas.height;
+                    this.size = Math.random() * 2 + 1;
+                    this.speedY = -(Math.random() * 0.8 + 0.2);
+                    this.speedX = (Math.random() - 0.5) * 0.3;
+                    this.opacity = Math.random() * 0.5 + 0.1;
+                    this.color = Math.random() > 0.5 ? '129, 140, 248' : '167, 139, 250'; // Indigo & Violet
+                }
+
+                update() {
+                    this.y += this.speedY;
+                    this.x += this.speedX;
+                    if (this.y < 0) {
+                        this.reset();
+                    }
+                }
+
+                draw() {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(${this.color}, ${this.opacity})`;
+                    ctx.fill();
+                }
+            }
+
+            for (let i = 0; i < particleCount; i++) {
+                particles.push(new Particle());
+                particles[i].y = Math.random() * canvas.height;
+            }
+
+            function animate() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Draw a perfectly centered filled rectangle with w:h = 4:3 that fits the canvas size
+                let w, h;
+                const targetRatio = 4 / 3;
+                const canvasRatio = canvas.width / canvas.height;
+
+                if (canvasRatio > targetRatio) {
+                    // Limited by height
+                    h = canvas.height;
+                    w = h * targetRatio;
+                } else {
+                    // Limited by width
+                    w = canvas.width;
+                    h = w / targetRatio;
+                }
+
+                const x = (canvas.width - w) / 2;
+                const y = (canvas.height - h) / 2;
+
+                const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                grad.addColorStop(0, 'rgba(99, 102, 241, 0.07)');
+                grad.addColorStop(1, 'rgba(139, 92, 246, 0.07)');
+
+                ctx.fillStyle = grad;
+                ctx.fillRect(x, y, w, h);
+
+                // Elegant border outline for the 4:3 rectangle
+                ctx.strokeStyle = 'rgba(99, 102, 241, 0.2)';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(x, y, w, h);
+
+                particles.forEach(p => {
+                    p.update();
+                    p.draw();
+                });
+                requestAnimationFrame(animate);
+            }
+
+            animate();
+
+            const wasiSnapshotPreview1 = {
+                args_get: () => 0,
+                args_sizes_get: (argc, argvBufSize) => {
+                    const memory = window.gradGameWasm?.memory;
+                    if (!memory) return 0;
+                    const view = new DataView(memory.buffer);
+                    view.setUint32(argc, 0, true);
+                    view.setUint32(argvBufSize, 0, true);
+                    return 0;
+                },
+                environ_get: () => 0,
+                environ_sizes_get: (count, bufSize) => {
+                    const memory = window.gradGameWasm?.memory;
+                    if (!memory) return 0;
+                    const view = new DataView(memory.buffer);
+                    view.setUint32(count, 0, true);
+                    view.setUint32(bufSize, 0, true);
+                    return 0;
+                },
+                fd_close: () => 0,
+                fd_fdstat_get: () => 0,
+                fd_prestat_get: () => 8,
+                fd_prestat_dir_name: () => 8,
+                fd_read: () => 0,
+                fd_seek: () => 0,
+                fd_write: () => 0,
+                path_open: () => 8,
+                proc_exit: (code) => {
+                    throw new Error(`WASI proc_exit(${code})`);
+                },
+                random_get: (buffer, length) => {
+                    const memory = window.gradGameWasm?.memory;
+                    if (!memory) return 0;
+                    crypto.getRandomValues(new Uint8Array(memory.buffer, buffer, length));
+                    return 0;
+                },
+            };
+
+            async function testSwiftAdd() {
+                const result = document.getElementById('wasm-add-result');
+
+                try {
+                    const response = await fetch('.build/wasm32-unknown-wasip1/debug/GradGame.wasm');
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+
+                    const { instance } = await WebAssembly.instantiateStreaming(response, {
+                        wasi_snapshot_preview1: wasiSnapshotPreview1,
+                    });
+
+                    window.gradGameWasm = instance.exports;
+                    const value = instance.exports.add(2, 3);
+                    result.textContent = `Swift add(2, 3) = ${value}`;
+                    result.dataset.status = value === 5 ? 'pass' : 'fail';
+                } catch (error) {
+                    result.textContent = `Swift Wasm test failed: ${error.message}`;
+                    result.dataset.status = 'fail';
+                    console.error(error);
+                }
+            }
+
+            testSwiftAdd();
+        </script>
+    </body>
+</html>

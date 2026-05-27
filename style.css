@@ -1,0 +1,192 @@
+/* Modern CSS Reset & Root Variables */
+:root {
+    /* Light Theme (Default) */
+    --bg-primary: #f8fafc;
+    --bg-card: rgba(255, 255, 255, 0.75);
+    --border-color: rgba(99, 102, 241, 0.15);
+    --border-hover: rgba(139, 92, 246, 0.5);
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --accent: #4f46e5;
+    --accent-glow: rgba(99, 102, 241, 0.08);
+    --text-title-gradient: linear-gradient(135deg, #0f172a 0%, #334155 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* Dark Theme Override */
+        --bg-primary: #0b0f19;
+        --bg-card: rgba(22, 28, 45, 0.6);
+        --border-color: rgba(99, 102, 241, 0.2);
+        --border-hover: rgba(139, 92, 246, 0.6);
+        --text-primary: #f8fafc;
+        --text-secondary: #94a3b8;
+        --accent: #6366f1;
+        --accent-glow: rgba(99, 102, 241, 0.15);
+        --text-title-gradient: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
+    }
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    min-height: 100vh;
+    overflow: auto;
+}
+
+body {
+    font-family: 'Lora', Georgia, 'Times New Roman', serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+    padding: 2rem;
+    /* Subtle background grid pattern for modern feel */
+    background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
+}
+
+/* Beautiful Premium Cards (divs or inputs) */
+.card {
+    width: 100%;
+    max-width: 420px;
+    height: 180px;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: 20px;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+    outline: none;
+}
+
+/* Minimum size of first div is 480p (widescreen 854x480) */
+#session-new {
+    min-width: 854px;
+    max-width: none;
+    min-height: 480px;
+    height: auto;
+}
+
+/* Dynamic Interactive Hover & Focus Effects & Micro-animations */
+.card:hover, .card:focus {
+    transform: translateY(-6px);
+    border-color: var(--border-hover);
+    box-shadow: 
+        0 20px 40px -15px rgba(0, 0, 0, 0.6),
+        0 0 20px 0 var(--accent-glow);
+}
+
+/* Decorative glass reflection lines inside each card */
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+    border-radius: 20px 20px 0 0;
+}
+
+/* Card inner content styling */
+.card-icon {
+    font-size: 2.2rem;
+    margin-bottom: 0.75rem;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.card:hover .card-icon {
+    transform: scale(1.15) translateY(-3px);
+}
+
+h2 {
+    font-family: 'EB Garamond', Georgia, 'Times New Roman', serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+    background: var(--text-title-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.01em;
+}
+
+p {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: 1.5;
+}
+
+#wasm-add-result {
+    margin-top: 1rem;
+    min-height: 1.5rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-align: center;
+}
+
+#wasm-add-result[data-status="fail"] {
+    color: #dc2626;
+}
+
+/* Specific styling for the simplified second card (which is now an input element) */
+#session-load {
+    height: auto;
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    text-align: center;
+    cursor: text;
+}
+
+#session-load::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+/* Canvas background overlay */
+#canvas-new {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 20px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Card content container to sit above the animated canvas */
+.card-content {
+    position: relative;
+    z-index: 1;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    gap: inherit; /* inherit general layout spacings */
+}
