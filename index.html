@@ -40,7 +40,16 @@
                 <output id="wasm-add-result" aria-live="polite">Loading Swift Wasm...</output>
             </div>
         </div>
-        <input class="card" id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false">
+        <div class="expression-row">
+            <input class="card" id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false">
+            <button class="help-btn" id="help-toggle" type="button" aria-label="Help">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="10" cy="10" r="9" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M7.5 7.5a2.5 2.5 0 0 1 4.85.83c0 1.67-2.5 2.5-2.5 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <circle cx="10" cy="14" r="0.75" fill="currentColor"/>
+                </svg>
+            </button>
+        </div>
         <div id="evaluation-controls" aria-label="Expression variables">
             <label>
                 <span>x</span>
@@ -55,7 +64,21 @@
         <output id="tex-parser-result" aria-live="polite">Loading parser...</output>
         <output id="js-parser-result" aria-live="polite">Loading parser...</output>
 
+        <!-- Help Popup Overlay -->
+        <div class="help-overlay" id="help-overlay" hidden>
+            <div class="help-popup" id="help-popup" role="dialog" aria-modal="true" aria-label="Help">
+                <div class="help-popup-header">
+                    <h3>Help</h3>
+                    <button class="help-popup-close" id="help-close" type="button" aria-label="Close">&times;</button>
+                </div>
+                <div class="help-popup-body" id="help-body">
+                    <p class="help-loading">Loading…</p>
+                </div>
+            </div>
+        </div>
+
         <script src="gradgame-canvas.js"></script>
         <script defer src="gradgame-wasm.js"></script>
+        <script defer src="gradgame-help.js"></script>
     </body>
 </html>

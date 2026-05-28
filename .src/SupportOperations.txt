@@ -1,0 +1,34 @@
+```
++
+-
+*
+/
+^
++(_:)
+-(_:)
+```
+Trigonometry, Hyperbolic, Exponential functions
+```
+sin(_:)
+cos(_:)
+tan(_:)
+asin(_:)
+acos(_:)
+atan(_:)
+```
+```
+pow(_:,_:)
+exp(_:)
+```
+Partial derivatives
+```
+ dx(_:)
+ dy(_:)
+```
+Constants 
+```
+e
+pi
+phi
+gamma
+```

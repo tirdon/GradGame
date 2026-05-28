@@ -167,6 +167,53 @@ p {
     opacity: 0.6;
 }
 
+/* Expression input row with help button */
+.expression-row {
+    width: 100%;
+    max-width: 854px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.expression-row .card {
+    flex: 1;
+    max-width: none;
+}
+
+.help-btn {
+    flex-shrink: 0;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.3);
+    outline: none;
+}
+
+.help-btn:hover,
+.help-btn:focus-visible {
+    border-color: var(--border-hover);
+    color: var(--accent);
+    transform: scale(1.12);
+    box-shadow:
+        0 8px 24px -4px rgba(0, 0, 0, 0.35),
+        0 0 16px 0 var(--accent-glow);
+}
+
+.help-btn:active {
+    transform: scale(0.95);
+}
+
 #evaluation-controls {
     width: 100%;
     max-width: 854px;
@@ -288,6 +335,255 @@ p {
     gap: inherit; /* inherit general layout spacings */
 }
 
+/* ─────────────────────────────────────────────────────────
+   Help Popup
+   ───────────────────────────────────────────────────────── */
+
+.help-overlay[hidden] {
+    display: none;
+}
+
+.help-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    opacity: 0;
+    padding: 1.5rem;
+}
+
+.help-overlay.open {
+    animation: help-fade-in 0.3s ease forwards;
+}
+
+.help-overlay.closing {
+    animation: help-fade-out 0.25s ease forwards;
+}
+
+@keyframes help-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes help-fade-out {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+}
+
+/* Popup Card */
+.help-popup {
+    width: 100%;
+    max-width: 600px;
+    max-height: 80vh;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    box-shadow:
+        0 25px 60px -12px rgba(0, 0, 0, 0.5),
+        0 0 30px 0 var(--accent-glow);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(24px) scale(0.92);
+}
+
+.help-overlay.open .help-popup {
+    animation: help-popup-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.help-overlay.closing .help-popup {
+    animation: help-popup-out 0.25s ease forwards;
+}
+
+@keyframes help-popup-in {
+    from { opacity: 0; transform: translateY(24px) scale(0.92); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes help-popup-out {
+    from { opacity: 1; transform: translateY(0) scale(1); }
+    to   { opacity: 0; transform: translateY(24px) scale(0.92); }
+}
+
+/* Popup Header */
+.help-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.help-popup-header h3 {
+    font-family: 'EB Garamond', Georgia, 'Times New Roman', serif;
+    font-size: 1.35rem;
+    font-weight: 700;
+    background: var(--text-title-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin: 0;
+}
+
+.help-popup-close {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.help-popup-close:hover {
+    background: var(--accent-glow);
+    color: var(--accent);
+}
+
+/* Popup Body */
+.help-popup-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.help-loading {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 2rem 0;
+}
+
+.help-error {
+    text-align: center;
+    color: #dc2626;
+    padding: 2rem 0;
+}
+
+/* Help Sections */
+.help-section {
+    margin-bottom: 1.75rem;
+}
+
+.help-section:last-child {
+    margin-bottom: 0;
+}
+
+.help-section > h3 {
+    font-family: 'EB Garamond', Georgia, 'Times New Roman', serif;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+    -webkit-text-fill-color: unset;
+    background: none;
+    -webkit-background-clip: unset;
+}
+
+/* Form-aligned Operations */
+.help-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.help-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.help-form-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: capitalize;
+    letter-spacing: 0.03em;
+}
+
+.help-form-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.help-form-items code {
+    display: inline-block;
+    background: var(--accent-glow);
+    color: var(--accent);
+    padding: 0.2rem 0.6rem;
+    border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.82rem;
+    font-weight: 600;
+    border: 1px solid rgba(99, 102, 241, 0.1);
+    transition: all 0.2s ease;
+}
+
+.help-form-items code:hover {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: var(--border-hover);
+}
+
+/* Example Rows */
+.help-examples {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.help-example-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr);
+    gap: 0.75rem;
+    align-items: center;
+    padding: 0.6rem 0.85rem;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.help-example-row:hover {
+    background: var(--accent-glow);
+}
+
+.help-example-input code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.help-example-arrow {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    opacity: 0.6;
+}
+
+.help-example-tex {
+    color: var(--accent);
+    font-size: 0.95rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.help-example-tex .katex {
+    font-size: 1em;
+}
+
 @media (max-width: 900px) {
     body {
         padding: 1rem;
@@ -302,5 +598,22 @@ p {
 
     #evaluation-controls {
         grid-template-columns: 1fr;
+    }
+
+    .expression-row {
+        max-width: none;
+    }
+
+    .help-popup {
+        max-height: 90vh;
+    }
+
+    .help-example-row {
+        grid-template-columns: 1fr;
+        gap: 0.25rem;
+    }
+
+    .help-example-arrow {
+        display: none;
     }
 }
