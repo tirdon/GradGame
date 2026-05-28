@@ -1,10 +1,171 @@
 (async () => {
     const wasmPath = 'GradGame.wasm';
     const result = document.getElementById('wasm-add-result');
+    const expressionInput = document.getElementById('session-load');
+    const texResult = document.getElementById('tex-parser-result');
+    const jsResult = document.getElementById('js-parser-result');
+    const evalX = document.getElementById('eval-x');
+    const evalY = document.getElementById('eval-y');
+    const evalResult = document.getElementById('js-eval-result');
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
     let wasmExports = null;
 
     function writeUint32(memory, pointer, value) {
         new DataView(memory.buffer).setUint32(pointer, value, true);
+    }
+
+    function memoryBytes() {
+        return new Uint8Array(wasmExports.memory.buffer);
+    }
+
+    function decodeWasmString(pointer, length) {
+        if (!pointer || length <= 0) {
+            return '';
+        }
+
+        return decoder.decode(memoryBytes().subarray(pointer, pointer + length));
+    }
+
+    function parseExpression(input, exportName) {
+        const bytes = encoder.encode(input);
+        let inputPointer = 0;
+
+        if (bytes.length > 0) {
+            inputPointer = wasmExports.gradGameAllocate(bytes.length);
+            if (!inputPointer) {
+                throw new Error('Unable to allocate Wasm input memory.');
+            }
+            memoryBytes().set(bytes, inputPointer);
+        }
+
+        const outputPointer = wasmExports[exportName](inputPointer, bytes.length);
+        const outputLength = wasmExports.gradGameLastResultLength();
+        const ok = wasmExports.gradGameLastParseSucceeded() === 1;
+        const text = decodeWasmString(outputPointer, outputLength);
+
+        if (inputPointer) {
+            wasmExports.gradGameDeallocate(inputPointer, bytes.length);
+        }
+        wasmExports.gradGameFreeLastResult();
+
+        return { ok, text };
+    }
+
+    function parseToTeX(input) {
+        return parseExpression(input, 'parseExpressionToTex');
+    }
+
+    function parseToJavaScript(input) {
+        return parseExpression(input, 'parseExpressionToJavaScript');
+    }
+
+    function setOutput(output, text, status) {
+        if (!output) {
+            return;
+        }
+
+        output.dataset.status = status;
+        output.textContent = text;
+        output.setAttribute('aria-label', text);
+        if (output === jsResult) {
+            delete output.dataset.js;
+        }
+        if (output === evalResult) {
+            delete output.dataset.value;
+        }
+    }
+
+    function setTexOutput(text, status, renderMath) {
+        if (!texResult) {
+            return;
+        }
+
+        texResult.dataset.status = status;
+        texResult.dataset.tex = text;
+        texResult.setAttribute('aria-label', text);
+
+        if (renderMath && window.katex) {
+            try {
+                window.katex.render(text, texResult, {
+                    displayMode: false,
+                    strict: 'ignore',
+                    throwOnError: false,
+                });
+                return;
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        texResult.textContent = text;
+    }
+
+    function evaluateJavaScriptExpression(expression) {
+        const x = Number(evalX?.value ?? 0);
+        const y = Number(evalY?.value ?? 0);
+
+        if (Number.isNaN(x) || Number.isNaN(y)) {
+            return 'NaN';
+        }
+
+        const value = Function('x', 'y', `"use strict"; return (${expression});`)(x, y);
+        if (typeof value !== 'number') {
+            return 'NaN';
+        }
+
+        if (Number.isNaN(value)) {
+            return 'NaN';
+        }
+
+        if (Object.is(value, -0)) {
+            return '0';
+        }
+
+        return String(value);
+    }
+
+    function renderExpression() {
+        if (!wasmExports || !texResult || !jsResult || !expressionInput) {
+            return;
+        }
+
+        const input = expressionInput.value.trim();
+        if (!input) {
+            setTexOutput('Enter an expression.', 'idle', false);
+            setOutput(jsResult, 'Enter an expression.', 'idle');
+            setOutput(evalResult, 'NaN', 'idle');
+            return;
+        }
+
+        try {
+            const tex = parseToTeX(input);
+            setTexOutput(tex.text, tex.ok ? 'pass' : 'fail', tex.ok);
+
+            if (!tex.ok) {
+                setOutput(jsResult, tex.text, 'fail');
+                setOutput(evalResult, 'NaN', 'fail');
+                return;
+            }
+
+            const js = parseToJavaScript(input);
+            setOutput(jsResult, js.text, js.ok ? 'pass' : 'fail');
+            jsResult.dataset.js = js.text;
+
+            if (!js.ok) {
+                setOutput(evalResult, 'NaN', 'fail');
+                return;
+            }
+
+            const value = evaluateJavaScriptExpression(js.text);
+            setOutput(evalResult, value, 'pass');
+            evalResult.dataset.value = value;
+        } catch (error) {
+            setTexOutput(error.message, 'fail', false);
+            setOutput(jsResult, error.message, 'fail');
+            setOutput(evalResult, 'NaN', 'fail');
+            console.error(error);
+        }
     }
 
     const wasiSnapshotPreview1 = {
@@ -58,9 +219,19 @@
         const value = wasmExports.add(2, 3);
         result.textContent = `Swift add(2, 3) = ${value}`;
         result.dataset.status = value === 5 ? 'pass' : 'fail';
+
+        expressionInput?.addEventListener('input', renderExpression);
+        evalX?.addEventListener('input', renderExpression);
+        evalY?.addEventListener('input', renderExpression);
+        renderExpression();
     } catch (error) {
         result.textContent = `Swift Wasm test failed: ${error.message}`;
         result.dataset.status = 'fail';
+        if (texResult) {
+            setTexOutput('Parser unavailable.', 'fail', false);
+        }
+        setOutput(jsResult, 'Parser unavailable.', 'fail');
+        setOutput(evalResult, 'NaN', 'fail');
         console.error(error);
     }
 })();

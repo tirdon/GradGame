@@ -5,8 +5,8 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         
         <!-- Primary Meta Tags -->
-        <title>GradGame — The Ultimate College Graduation Simulator</title>
-        <meta name="title" content="GradGame — The Ultimate College Graduation Simulator">
+        <title>GradGame — Gradient Game</title>
+        <meta name="title" content="GradGame — Gradient Game">
         <meta name="description" content="Embark on an epic collegiate adventure. highly interactive simulation game.">
         <meta name="keywords" content="GradGame, interactive web game">
         <meta name="author" content="GradGame Team">
@@ -18,7 +18,7 @@
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
         <!-- Favicon (Modern Self-Contained SVG) -->
-        <link rel="icon" type="image/svg+xml" href="data:image/svg+xml, <svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>🎓</text></svg>">
+        <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2280%22%3E%F0%9F%8E%93%3C/text%3E%3C/svg%3E">
 
         <!-- Premium Academic Typography (Google Fonts: EB Garamond & Lora) -->
         <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,7 +26,9 @@
         <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Lora:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
 
         <!-- Global Stylesheet -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
         <link rel="stylesheet" href="style.css">
+        <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     </head>
     <body>
         <div class="card" id="session-new">
@@ -34,13 +36,26 @@
             <div class="card-content">
                 <span class="card-icon">🎓</span>
                 <h2>New Adventure</h2>
-                <p>Start a new academic life and build your legacy.</p>
+                
                 <output id="wasm-add-result" aria-live="polite">Loading Swift Wasm...</output>
             </div>
         </div>
-        <input class="card" id="session-load" type="text" placeholder="Enter session code...">
+        <input class="card" id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false">
+        <div id="evaluation-controls" aria-label="Expression variables">
+            <label>
+                <span>x</span>
+                <input id="eval-x" type="number" value="1" step="any">
+            </label>
+            <label>
+                <span>y</span>
+                <input id="eval-y" type="number" value="1" step="any">
+            </label>
+            <output id="js-eval-result" aria-live="polite">NaN</output>
+        </div>
+        <output id="tex-parser-result" aria-live="polite">Loading parser...</output>
+        <output id="js-parser-result" aria-live="polite">Loading parser...</output>
 
         <script src="gradgame-canvas.js"></script>
-        <script async src="gradgame-wasm.js"></script>
+        <script defer src="gradgame-wasm.js"></script>
     </body>
 </html>

@@ -1,4 +1,4 @@
-(function () {
+(() => {
     const canvas = document.getElementById('canvas-new');
     const ctx = canvas.getContext('2d');
     const card = document.getElementById('session-new');
