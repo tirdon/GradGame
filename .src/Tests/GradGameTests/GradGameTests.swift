@@ -8,16 +8,16 @@ import Testing
 @Test func parserRendersReferenceExamples() throws {
     let cases = [
         ("sin x + 4", "\\sin x + 4"),
-        ("sin x y + x ^ 2 + 3", "\\sin x \\times y + x^{2} + 3"),
+        ("sin x y + x ^ 2 + 3", "\\sin x y + x^{2} + 3"),
         ("cos(2 pi x)", "\\cos(2 \\pi x)"),
         ("x y ^ 2 + 3 x + 2 x ^ 3", "x y^{2} + 3 x + 2 x^{3}"),
         ("x^ (5 pi + 4) x", "x^{5 \\pi + 4} x"),
         ("e ^ x y + 7", "e^{x} y + 7"),
         ("(x)/(y)", "\\frac{x}{y}"),
         ("tan^2 x", "\\tan^{2} x"),
-        ("tan^2 x y", "\\tan^{2} x \\times y"),
+        ("tan^2 x y", "\\tan^{2} x y"),
         ("tan^2 (x y)", "\\tan^{2}(x y)"),
-        ("3 tan x x y", "3 \\tan x \\times x \\times y"),
+        ("3 tan x x y", "3 \\tan x x y"),
     ]
 
     for (input, expected) in cases {

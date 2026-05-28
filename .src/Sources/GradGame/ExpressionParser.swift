@@ -531,34 +531,31 @@ private struct TeXRenderer {
     }
 
     private func implicitMultiplicationSeparator(lhs: Expression, rhs: Expression) -> String {
-        if isCoefficient(lhs) || hasLeadingCoefficient(rhs) {
-            return " "
+        let trailing = trailingFactor(lhs)
+        let leading = leadingFactor(rhs)
+
+        if isFunctionLike(trailing) && isFunctionLike(leading) {
+            return " \\times "
         }
 
-        return isFunctionLike(lhs) || isFunctionLike(rhs) ? " \\times " : " "
+        return " "
     }
 
-    private func hasLeadingCoefficient(_ expression: Expression) -> Bool {
+    private func trailingFactor(_ expression: Expression) -> Expression {
         switch expression {
-        case .number:
-            return true
-        case let .unary(.plus, operand), let .unary(.minus, operand):
-            return hasLeadingCoefficient(operand)
+        case let .binary(.implicitMultiply, _, rhs), let .binary(.multiply, _, rhs):
+            return trailingFactor(rhs)
+        default:
+            return expression
+        }
+    }
+
+    private func leadingFactor(_ expression: Expression) -> Expression {
+        switch expression {
         case let .binary(.implicitMultiply, lhs, _), let .binary(.multiply, lhs, _):
-            return hasLeadingCoefficient(lhs)
+            return leadingFactor(lhs)
         default:
-            return false
-        }
-    }
-
-    private func isCoefficient(_ expression: Expression) -> Bool {
-        switch expression {
-        case .number:
-            return true
-        case let .unary(.plus, operand), let .unary(.minus, operand):
-            return isCoefficient(operand)
-        default:
-            return false
+            return expression
         }
     }
 
