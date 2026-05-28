@@ -171,8 +171,8 @@
 
         try {
             const [opsRes, exRes] = await Promise.all([
-                fetch('.src/SupportOperations.txt'),
-                fetch('.src/InputExamples.txt'),
+                fetch('SupportOperations.txt'),
+                fetch('InputExamples.txt'),
             ]);
 
             if (!opsRes.ok || !exRes.ok) throw new Error('Failed to load help files.');
