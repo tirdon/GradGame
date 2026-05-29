@@ -10,6 +10,7 @@ enum ExpressionParserError: Error, Equatable, CustomStringConvertible {
     case wrongArgumentCount(String, expected: Int, received: Int)
     case trailingInput(String)
     case expressionTooComplex
+    case numberTooLarge
 
     var description: String {
         switch self {
@@ -35,6 +36,8 @@ enum ExpressionParserError: Error, Equatable, CustomStringConvertible {
             return "Unexpected input after expression: \(found)."
         case .expressionTooComplex:
             return "Expression is too complex. Try a shorter one."
+        case .numberTooLarge:
+            return "Number is too large (exponent exceeds 38)."
         }
     }
 }

@@ -171,7 +171,7 @@
 
         try {
             const [opsRes, exRes] = await Promise.all([
-                fetch('SupportOperations.txt'),
+                fetch('SupportedOperation.txt'),
                 fetch('InputExamples.txt'),
             ]);
 

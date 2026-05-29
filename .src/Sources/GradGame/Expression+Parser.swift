@@ -1,7 +1,7 @@
 public func parseExpressionToTeX(_ input: String, simplify: Bool = false) throws -> String {
     var expression = try parseExpression(input)
     if simplify {
-        expression = Simplifier().simplify(expression)
+        expression = try Simplifier().simplify(expression)
     }
     return TeXRenderer().render(expression)
 }

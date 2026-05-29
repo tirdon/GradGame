@@ -141,22 +141,24 @@ import Testing
         #expect(try parseExpressionToTeX(input) == expected)
     }
 
-    // A product that overflows Int32 is left unfolded (no trap) rather than folded.
-    #expect(try parseExpressionToTeX("100000 * 100000", simplify: true) == "100000 \\times 100000")
+    // A product whose result exceeds Int32 folds into one scientific value
+    // (mantissa × mantissa, exponent + exponent) rather than staying symbolic.
+    #expect(try parseExpressionToTeX("100000 * 100000", simplify: true) == "1 \\times 10^{10}")
     // A lone large literal times 1 folds the 1 away and renders scientifically.
     #expect(try parseExpressionToTeX("3333333333 * 1", simplify: true) == "3.333333333 \\times 10^{9}")
     // E-notation survives simplification rather than being folded to a plain integer.
     #expect(try parseExpressionToTeX("3E6", simplify: true) == "3 \\times 10^{6}")
 }
 
-@Test func simplifierHandlesIntegerOverflowWithoutTrapping() throws {
-    // Each literal fits in Int64, but the products/sums overflow it. Folding must
-    // fall back to keeping the value symbolic rather than trapping on overflow.
+@Test func simplifierFoldsLargeNumbersScientifically() throws {
+    // Products of large literals fold into one scientific value, with the mantissa
+    // rounded to 15 significant figures. None of this traps on overflow.
     let cases = [
-        // Two huge factors (beyond Int32): kept as a product, each shown scientifically.
-        ("135347859346579365 * 173465974659813", "1.35347859346579365 \\times 10^{17} \\times 1.73465974659813 \\times 10^{14}"),
-        // Factors within Int32 whose product overflows Int32 stay unfolded (no trap).
-        ("999999999 * 999999999 * 999999999", "999999999 \\times 999999999 \\times 999999999"),
+        // Two huge factors fold into a single 15-sig-fig value (exact product is
+        // 23478248339673670237071080558745, rounded up at the 16th digit).
+        ("135347859346579365 * 173465974659813", "2.34782483396737 \\times 10^{31}"),
+        // 999999999^3 = 999999997000000002999999999, rounded to 15 sig figs.
+        ("999999999 * 999999999 * 999999999", "9.99999997 \\times 10^{26}"),
         // A lone large literal with an implicit ·1: the 1 folds away, scientific render.
         ("3333333333 1", "3.333333333 \\times 10^{9}"),
         // Small values still fold normally.
@@ -167,6 +169,65 @@ import Testing
     for (input, expected) in cases {
         #expect(try parseExpressionToTeX(input, simplify: true) == expected)
     }
+}
+
+@Test func simplifierFoldsSumsAndPowersScientifically() throws {
+    // Sums/differences of numbers combine (aligning exponents), and integer powers
+    // fold by repeated multiplication — all subject to the same scientific model.
+    let cases = [
+        ("3000000000 + 3000000000", "6 \\times 10^{9}"),
+        ("2E30 + 3E30", "5 \\times 10^{30}"),
+        ("10 ^ 20", "1 \\times 10^{20}"),
+        ("2 ^ 10", "1024"),          // small power stays a plain integer
+        ("2 ^ 3", "8"),
+        ("2.5 * 2", "5"),            // decimals fold too
+    ]
+
+    for (input, expected) in cases {
+        #expect(try parseExpressionToTeX(input, simplify: true) == expected)
+    }
+}
+
+@Test func simplifierMergesRepeatedSumBasesIntoPowers() throws {
+    // `(x+1)` and `(1+x)` canonicalize to the same base, so a repeated factor's
+    // exponents merge into one power: (x+1)^2 (1+x) -> (x+1)^3 (a true identity,
+    // since this is multiplication). Written with `+` it is a different, unequal
+    // expression — (x+1)^2 + 1 + x = x^2+3x+2, not (x+1)^3 — and is left as such.
+    let cube = "\\left(x + 1\\right)^{3}"
+    #expect(try parseExpressionToTeX("(x+1)^2 (1+x)", simplify: true) == cube)
+    #expect(try parseExpressionToTeX("(1+x)(x+1)^2", simplify: true) == cube)
+    #expect(try parseExpressionToTeX("(x+1)(x+1)(x+1)", simplify: true) == cube)
+    // The additive form is preserved (correctly not collapsed into the cube).
+    #expect(try parseExpressionToTeX("(x+1)^2 + 1+x", simplify: true) == "\\left(x + 1\\right)^{2} + x + 1")
+}
+
+@Test func simplifierCollectsLikeTermsOverCompoundBases() throws {
+    // Like-term collection treats a compound base like (x+1)^2 the same as a bare
+    // variable: 1·(x+1)^2 + 2·(x+1)^2 -> 3 (x+1)^2 (a true identity).
+    let square = "\\left(x + 1\\right)^{2}"
+    #expect(try parseExpressionToTeX("(x+1)^2 + 2(x+1)^2", simplify: true) == "3 " + square)
+    #expect(try parseExpressionToTeX("(x+1)^2 + 2 (1+x)^2", simplify: true) == "3 " + square)
+    #expect(try parseExpressionToTeX("3(x+1)^2 - (x+1)^2", simplify: true) == "2 " + square)
+}
+
+@Test func simplifierRejectsNumbersTooLargeForFloat32() throws {
+    // With simplify on, any value whose exponent exceeds 38 is rejected cleanly
+    // (a thrown error, never a trap), so the page never folds an unrepresentable
+    // number — whether folded from an operation or typed as a lone literal.
+    let tooLarge = [
+        "10 ^ 40",        // power
+        "1E20 * 1E20",    // product -> 1e40
+        "5E38 + 5E38",    // sum -> 1e39
+        "3E40",           // lone literal
+    ]
+    for input in tooLarge {
+        #expect(throws: ExpressionParserError.numberTooLarge) {
+            try parseExpressionToTeX(input, simplify: true)
+        }
+    }
+
+    // The cap is simplify-only: without simplification the literal still renders.
+    #expect(try parseExpressionToTeX("3E40") == "3 \\times 10^{40}")
 }
 
 @Test func parserRejectsOverlyComplexInput() throws {

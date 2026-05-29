@@ -3,35 +3,62 @@
 /// (`x x + x x -> 2 x^2`, `3 x + 2 x -> 5 x`), like factors are merged into powers
 /// (`2 x x -> 2 x^2`, `sin x sin x -> sin^2 x`), constants are folded, and the
 /// standard additive/multiplicative/power identities are applied.
+///
+/// Numeric constants fold through `DecimalValue` (mantissa × 10^exponent):
+/// multiplication multiplies mantissas and adds exponents, addition aligns
+/// exponents, and an integer power repeats multiplication. Any folded value whose
+/// decimal exponent exceeds 38 (the float32 range) is rejected with
+/// `ExpressionParserError.numberTooLarge`, so `simplify` is throwing.
 struct Simplifier {
-    func simplify(_ expression: Expression) -> Expression {
+    /// Largest decimal exponent a folded value may have (float32's ~3.4e38 range).
+    private static let maximumExponent = 38
+
+    func simplify(_ expression: Expression) throws -> Expression {
         switch expression {
-        case .number, .variable, .constant:
+        case .number:
+            // Reject a too-large literal even when it is not folded (e.g. a lone
+            // `3E40`, or a literal inside an unfolded division). Display is left
+            // untouched — the original expression is returned unchanged.
+            if case let .number(text) = expression, let value = DecimalValue(literal: text) {
+                try capExponent(value)
+            }
+            return expression
+        case .variable, .constant:
             return expression
         case let .unary(op, operand):
-            return simplifyUnary(op, simplify(operand))
+            return simplifyUnary(op, try simplify(operand))
         case let .binary(op, _, _):
             switch op {
             case .add, .subtract:
-                return simplifySum(expression)
+                return try simplifySum(expression)
             case .multiply, .implicitMultiply:
-                return simplifyProduct(expression)
+                return try simplifyProduct(expression)
             case .divide, .power:
-                return simplifyBinary(expression)
+                return try simplifyBinary(expression)
             }
         case let .function(name, argument, exponent, parenthesized):
             return .function(
                 name: name,
-                argument: simplify(argument),
-                exponent: exponent.map(simplify),
+                argument: try simplify(argument),
+                exponent: try exponent.map(simplify),
                 parenthesized: parenthesized
             )
         case let .derivative(variable, argument, parenthesized):
             return .derivative(
                 variable: variable,
-                argument: simplify(argument),
+                argument: try simplify(argument),
                 parenthesized: parenthesized
             )
+        }
+    }
+
+    /// Throws `.numberTooLarge` when a folded value is too big for float32 (decimal
+    /// exponent > 38). Rounds first, so a value that rounds up into a higher
+    /// exponent (`9.99…e38 -> 1e39`) is rejected too.
+    private func capExponent(_ value: DecimalValue) throws {
+        if value.isZero { return }
+        if value.rounded().exponent > Simplifier.maximumExponent {
+            throw ExpressionParserError.numberTooLarge
         }
     }
 
@@ -50,10 +77,10 @@ struct Simplifier {
         }
     }
 
-    private func simplifyBinary(_ expression: Expression) -> Expression {
+    private func simplifyBinary(_ expression: Expression) throws -> Expression {
         guard case let .binary(op, rawLeft, rawRight) = expression else { return expression }
-        let lhs = simplify(rawLeft)
-        let rhs = simplify(rawRight)
+        let lhs = try simplify(rawLeft)
+        let rhs = try simplify(rawRight)
 
         switch op {
         case .divide:
@@ -67,7 +94,7 @@ struct Simplifier {
             if isOneLiteral(rhs) { return lhs } // e^1 -> e
             if isOneLiteral(lhs) { return .number("1") } // 1^e -> 1
             if isZeroLiteral(lhs), isPositiveLiteral(rhs) { return .number("0") } // 0^positive -> 0
-            if let folded = foldPower(lhs, rhs) { return folded }
+            if let folded = try foldPower(lhs, rhs) { return folded }
             return .binary(.power, lhs, rhs)
         case .add, .subtract, .multiply, .implicitMultiply:
             return expression // routed through simplifySum / simplifyProduct
@@ -76,20 +103,20 @@ struct Simplifier {
 
     // MARK: Products
 
-    /// Flattens an n-ary product, folds the numeric coefficient, and collects
-    /// like factors into powers.
-    private func simplifyProduct(_ expression: Expression) -> Expression {
+    /// Flattens an n-ary product, folds the numeric coefficient through
+    /// `DecimalValue`, and collects like factors into powers.
+    private func simplifyProduct(_ expression: Expression) throws -> Expression {
         var leaves: [Expression] = []
         flattenProduct(expression, into: &leaves)
 
         var factors: [Expression] = []
         var index = 0
         while index < leaves.count {
-            flattenProduct(simplify(leaves[index]), into: &factors)
+            flattenProduct(try simplify(leaves[index]), into: &factors)
             index += 1
         }
 
-        return buildProduct(ProductForm(factors, in: self))
+        return buildProduct(try ProductForm(factors, in: self))
     }
 
     private func flattenProduct(_ expression: Expression, into leaves: inout [Expression]) {
@@ -101,35 +128,21 @@ struct Simplifier {
         }
     }
 
-    /// A product as a signed integer coefficient, untouched non-integer numeric
-    /// literals, and `base^exponent` factors keyed by structural equality.
+    /// A product as a single folded numeric coefficient and `base^exponent` factors
+    /// keyed by structural equality. Every numeric literal — integer, decimal,
+    /// large, or E-notation — is multiplied into `numeric`.
     private struct ProductForm {
-        // Folding uses Int — the same width on host and wasm32, and the only
-        // integer width this toolchain formats without trapping. Values beyond Int
-        // stay as literals (shown in scientific notation), so folding never needs an
-        // out-of-range Double→Int conversion (which traps) nor 64-bit arithmetic.
-        var coefficient: Int = 1
-        var literals: [Expression] = []
+        var numeric: DecimalValue = .one
         var factors: [(base: Expression, exponent: Int)] = []
 
-        init(_ leaves: [Expression], in simplifier: Simplifier) {
+        init(_ leaves: [Expression], in simplifier: Simplifier) throws {
             var index = 0
             while index < leaves.count {
                 let leaf = leaves[index]
                 index += 1
-                if let value = simplifier.integerLiteralValue(leaf) {
-                    let (product, overflow) = simplifier.multiplyChecked(coefficient, value)
-                    if overflow {
-                        // The folded coefficient would exceed Int; keep this factor
-                        // verbatim instead of trapping (e.g. 1353…365 * 1734…813).
-                        literals.append(leaf)
-                    } else {
-                        coefficient = product
-                    }
-                    continue
-                }
-                if case .number = leaf {
-                    literals.append(leaf) // non-integer literal, kept verbatim
+                if let value = simplifier.numericValue(leaf) {
+                    numeric = numeric.multiply(by: value)
+                    try simplifier.capExponent(numeric)
                     continue
                 }
                 let (base, exponent) = simplifier.factorBaseExponent(leaf)
@@ -137,12 +150,13 @@ struct Simplifier {
                 var cursor = 0
                 while cursor < factors.count {
                     if factors[cursor].base == base {
+                        // Power exponents are Int, so two ±Int32-range exponents can
+                        // overflow when summed; on overflow keep the factor unmerged.
                         let (sum, overflow) = simplifier.addChecked(factors[cursor].exponent, exponent)
                         if !overflow {
                             factors[cursor].exponent = sum
                             merged = true
                         }
-                        // On overflow, fall through to keep this factor unmerged.
                         break
                     }
                     cursor += 1
@@ -172,19 +186,12 @@ struct Simplifier {
     }
 
     private func buildProduct(_ form: ProductForm) -> Expression {
-        if form.coefficient == 0 { return .number("0") }
+        if form.numeric.isZero { return .number("0") }
 
-        var literals = form.literals
-        sortBySortKey(&literals)
         var factors = form.factors
         sortFactorsByBase(&factors)
 
         var rest: [Expression] = []
-        var literalIndex = 0
-        while literalIndex < literals.count {
-            rest.append(literals[literalIndex])
-            literalIndex += 1
-        }
         var factorIndex = 0
         while factorIndex < factors.count {
             let entry = factors[factorIndex]
@@ -194,18 +201,26 @@ struct Simplifier {
         }
 
         if rest.isEmpty {
-            return makeInteger(form.coefficient)
+            return numberExpression(form.numeric)
         }
 
         let restProduct = chainProduct(rest)
-        switch form.coefficient {
-        case 1:
+        if form.numeric.isOne {
             return restProduct
-        case -1:
-            return simplifyUnary(.minus, restProduct)
-        default:
-            return .binary(.implicitMultiply, makeInteger(form.coefficient), restProduct)
         }
+        if form.numeric.isMinusOne {
+            return simplifyUnary(.minus, restProduct)
+        }
+        let coefficient = Expression.number(form.numeric.literalString())
+        let term = Expression.binary(.implicitMultiply, coefficient, restProduct)
+        return form.numeric.negative ? .unary(.minus, term) : term
+    }
+
+    /// A `.number` for a folded value's magnitude, wrapping negatives in a unary
+    /// minus so the renderer never sees a leading '-' inside a number string.
+    private func numberExpression(_ value: DecimalValue) -> Expression {
+        let literal = Expression.number(value.literalString())
+        return value.negative ? .unary(.minus, literal) : literal
     }
 
     private func buildPower(base: Expression, exponent: Int) -> Expression {
@@ -229,42 +244,32 @@ struct Simplifier {
     // MARK: Sums
 
     /// Flattens an n-ary sum/difference and collects like terms by their canonical
-    /// non-numeric part, summing the integer coefficients.
-    private func simplifySum(_ expression: Expression) -> Expression {
+    /// non-numeric part, summing the `DecimalValue` coefficients.
+    private func simplifySum(_ expression: Expression) throws -> Expression {
         var signedTerms: [(sign: Int, term: Expression)] = []
         flattenSum(expression, sign: 1, into: &signedTerms)
 
-        var constant: Int = 0
-        var extraConstants: [Int] = [] // constant chunks that could not be folded without overflow
-        var groups: [(rest: Expression, coefficient: Int)] = []
+        var constant: DecimalValue = .zero
+        var groups: [(rest: Expression, coefficient: DecimalValue)] = []
 
         var index = 0
         while index < signedTerms.count {
             let entry = signedTerms[index]
             index += 1
-            let split = splitCoefficient(simplify(entry.term))
-            // Wrapping negation (`0 &- x`) never traps, even for Int.min.
-            let signed = entry.sign < 0 ? (0 &- split.coefficient) : split.coefficient
+            let split = try splitCoefficient(try simplify(entry.term))
+            let signed = entry.sign < 0 ? split.numeric.negated : split.numeric
             if split.rest == .number("1") {
-                let (sum, overflow) = addChecked(constant, signed)
-                if overflow {
-                    extraConstants.append(constant)
-                    constant = signed
-                } else {
-                    constant = sum
-                }
+                constant = constant.adding(signed)
+                try capExponent(constant)
                 continue
             }
             var merged = false
             var cursor = 0
             while cursor < groups.count {
                 if groups[cursor].rest == split.rest {
-                    let (sum, overflow) = addChecked(groups[cursor].coefficient, signed)
-                    if !overflow {
-                        groups[cursor].coefficient = sum
-                        merged = true
-                    }
-                    // On overflow, fall through to keep this term separate.
+                    groups[cursor].coefficient = groups[cursor].coefficient.adding(signed)
+                    try capExponent(groups[cursor].coefficient)
+                    merged = true
                     break
                 }
                 cursor += 1
@@ -274,18 +279,15 @@ struct Simplifier {
             }
         }
 
-        var collected: [(rest: Expression, coefficient: Int)] = []
+        var collected: [(rest: Expression, coefficient: DecimalValue)] = []
         var groupIndex = 0
         while groupIndex < groups.count {
-            if groups[groupIndex].coefficient != 0 {
+            if !groups[groupIndex].coefficient.isZero {
                 collected.append(groups[groupIndex])
             }
             groupIndex += 1
         }
-        if constant != 0 {
-            extraConstants.append(constant)
-        }
-        return buildSum(groups: collected, constants: extraConstants)
+        return buildSum(groups: collected, constant: constant)
     }
 
     private func flattenSum(_ expression: Expression, sign: Int, into terms: inout [(sign: Int, term: Expression)]) {
@@ -305,32 +307,27 @@ struct Simplifier {
         }
     }
 
-    /// Splits a simplified term into its integer coefficient and canonical remainder,
-    /// so `3 x` becomes `(3, x)` and a bare constant becomes `(value, 1)`.
-    private func splitCoefficient(_ expression: Expression) -> (coefficient: Int, rest: Expression) {
+    /// Splits a simplified term into its `DecimalValue` coefficient and canonical
+    /// remainder, so `3 x` becomes `(3, x)` and a bare constant becomes `(value, 1)`.
+    private func splitCoefficient(_ expression: Expression) throws -> (numeric: DecimalValue, rest: Expression) {
         var leaves: [Expression] = []
         flattenProduct(expression, into: &leaves)
-        var form = ProductForm(leaves, in: self)
-        if form.coefficient == 0 { return (0, .number("1")) }
-        let coefficient = form.coefficient
-        form.coefficient = 1
-        return (coefficient, buildProduct(form))
+        var form = try ProductForm(leaves, in: self)
+        if form.numeric.isZero { return (.zero, .number("1")) }
+        let numeric = form.numeric
+        form.numeric = .one
+        return (numeric, buildProduct(form))
     }
 
-    private func buildSum(groups: [(rest: Expression, coefficient: Int)], constants: [Int]) -> Expression {
-        var terms: [(coefficient: Int, rest: Expression?)] = []
+    private func buildSum(groups: [(rest: Expression, coefficient: DecimalValue)], constant: DecimalValue) -> Expression {
+        var terms: [(coefficient: DecimalValue, rest: Expression?)] = []
         var index = 0
         while index < groups.count {
             terms.append((groups[index].coefficient, groups[index].rest))
             index += 1
         }
-        var constantIndex = 0
-        while constantIndex < constants.count {
-            let value = constants[constantIndex]
-            constantIndex += 1
-            if value != 0 {
-                terms.append((value, nil))
-            }
+        if !constant.isZero {
+            terms.append((constant, nil))
         }
         if terms.isEmpty { return .number("0") }
 
@@ -339,35 +336,48 @@ struct Simplifier {
         while termIndex < terms.count {
             let term = terms[termIndex]
             termIndex += 1
-            // Coefficients are bounded to ±Int32.max (see integerLiteralValue), so
-            // negation never hits Int.min and `.magnitude`/UInt — whose `Words`
-            // conformance this toolchain can't format — is avoided.
-            let magnitude = term.coefficient < 0 ? -term.coefficient : term.coefficient
+            let magnitude = term.coefficient.magnitude
             let termExpression: Expression
             if let rest = term.rest {
                 termExpression = buildTerm(magnitude: magnitude, rest: rest)
             } else {
-                termExpression = .number("\(magnitude)")
+                termExpression = .number(magnitude.literalString())
             }
             if let current = result {
-                result = term.coefficient < 0
+                result = term.coefficient.negative
                     ? .binary(.subtract, current, termExpression)
                     : .binary(.add, current, termExpression)
             } else {
-                result = term.coefficient < 0 ? .unary(.minus, termExpression) : termExpression
+                result = term.coefficient.negative ? .unary(.minus, termExpression) : termExpression
             }
         }
         return result ?? .number("0")
     }
 
-    private func buildTerm(magnitude: Int, rest: Expression) -> Expression {
-        if magnitude == 1 { return rest }
-        return .binary(.implicitMultiply, .number("\(magnitude)"), rest)
+    private func buildTerm(magnitude: DecimalValue, rest: Expression) -> Expression {
+        if magnitude.isOne { return rest }
+        return .binary(.implicitMultiply, .number(magnitude.literalString()), rest)
     }
 
     // MARK: Numeric helpers
 
-    /// The value of an expression when it is a numeric literal (optionally signed), else `nil`.
+    /// The `DecimalValue` of an expression when it is a numeric literal (optionally
+    /// signed), else nil. This is the fold entry point for every numeric leaf.
+    private func numericValue(_ expression: Expression) -> DecimalValue? {
+        switch expression {
+        case let .number(text):
+            return DecimalValue(literal: text)
+        case let .unary(.minus, inner):
+            return numericValue(inner)?.negated
+        case let .unary(.plus, inner):
+            return numericValue(inner)
+        default:
+            return nil
+        }
+    }
+
+    /// The value of an expression when it is a numeric literal (optionally signed),
+    /// else nil. Used only for the zero/one/sign identity checks and division.
     private func doubleValue(_ expression: Expression) -> Double? {
         switch expression {
         case let .number(text):
@@ -381,17 +391,14 @@ struct Simplifier {
         }
     }
 
-    /// The value of an expression when it is an integer-valued numeric literal, else `nil`.
-    fileprivate func integerLiteralValue(_ expression: Expression) -> Int? {
+    /// The value of an expression when it is an integer-valued literal within
+    /// ±Int32.max, else nil. Used to read small integer power exponents (so
+    /// `x^2 · x^3 -> x^5` and `10^20` fold). The ±Int32.max bound keeps host
+    /// (64-bit Int) and wasm32 (32-bit Int) in agreement and negation trap-free.
+    private func integerLiteralValue(_ expression: Expression) -> Int? {
         switch expression {
         case let .number(text):
-            // E-notation literals are preserved (rendered as m × 10^e), not folded.
             if containsExponentMarker(text) { return nil }
-            // Fold only integers within ±Int32.max. Anything larger is kept as a
-            // literal and shown in scientific notation. The ±Int32.max bound keeps
-            // behavior identical on host (Int is 64-bit) and wasm32 (Int is 32-bit),
-            // keeps every folded magnitude negatable without trapping, and makes the
-            // Double→Int conversion safe (a bare `Int(Double)` traps out of range).
             if let integer = Int(text), integer >= -2_147_483_647, integer <= 2_147_483_647 {
                 return integer
             }
@@ -409,23 +416,11 @@ struct Simplifier {
         }
     }
 
-    // MARK: Overflow-safe Int arithmetic
-    //
-    // Overflow is detected with a Double magnitude check rather than the stdlib's
-    // `multipliedReportingOverflow`/`addingReportingOverflow`, keeping the fold path
-    // clear of the generic FixedWidthInteger machinery this SwiftWasm toolchain
-    // mis-resolves. The check is exact near the ±Int32.max bound (well below 2^53),
-    // and the result uses wrapping operators, which never trap.
-
-    private static let foldLimit = 2_147_483_647.0 // Int32.max; symmetric ±bound
-
-    private func multiplyChecked(_ a: Int, _ b: Int) -> (value: Int, overflow: Bool) {
-        let product = Double(a) * Double(b)
-        if product > Simplifier.foldLimit || product < -Simplifier.foldLimit {
-            return (0, true)
-        }
-        return (a &* b, false)
-    }
+    // Overflow-safe Int addition for power-exponent merging. The check uses a
+    // Double magnitude compare rather than the stdlib reporting-overflow methods
+    // (generic FixedWidthInteger machinery this SwiftWasm toolchain mis-resolves);
+    // it is exact near ±Int32.max (well below 2^53) and the result wraps, never traps.
+    private static let foldLimit = 2_147_483_647.0
 
     private func addChecked(_ a: Int, _ b: Int) -> (value: Int, overflow: Bool) {
         let sum = Double(a) + Double(b)
@@ -464,19 +459,23 @@ struct Simplifier {
         return integerExpression(left / right)
     }
 
-    private func foldPower(_ lhs: Expression, _ rhs: Expression) -> Expression? {
-        guard let base = doubleValue(lhs), let exponent = doubleValue(rhs) else { return nil }
-        // Fold only small, non-negative integer exponents to keep the result exact.
-        guard exponent >= 0, exponent <= 64, exponent == exponent.rounded() else { return nil }
-        var result = 1.0
-        for _ in 0..<Int(exponent) {
-            result *= base
+    /// Folds `base^exponent` for a numeric base and a non-negative integer exponent
+    /// (bounded so the repeated multiplication cannot run away), multiplying
+    /// mantissas and adding exponents through `DecimalValue`. The cap rejects a
+    /// result too large for float32.
+    private func foldPower(_ lhs: Expression, _ rhs: Expression) throws -> Expression? {
+        guard let base = numericValue(lhs),
+              let exponent = integerLiteralValue(rhs),
+              exponent >= 0, exponent <= 1024 else {
+            return nil
         }
-        return integerExpression(result)
+        let result = base.power(exponent)
+        try capExponent(result)
+        return numberExpression(result)
     }
 
-    /// Only emits literals for integer-valued results, so the renderer never shows
-    /// floating-point artifacts such as `0.30000000000000004`.
+    /// Only emits literals for integer-valued division results, so the renderer
+    /// never shows floating-point artifacts such as `0.30000000000000004`.
     private func integerExpression(_ value: Double) -> Expression? {
         guard value.isFinite, value == value.rounded(),
               value >= -2_147_483_647, value <= 2_147_483_647 else {
@@ -491,8 +490,8 @@ struct Simplifier {
         value < 0 ? .unary(.minus, .number("\(-value)")) : .number("\(value)")
     }
 
-    /// A deterministic structural key used to order factors and terms so that
-    /// equal products/sums always rebuild to the same canonical tree.
+    /// A deterministic structural key used to order factors so that equal products
+    /// always rebuild to the same canonical tree.
     private func sortKey(_ expression: Expression) -> String {
         switch expression {
         case let .number(value):
@@ -536,39 +535,11 @@ struct Simplifier {
         }
     }
 
-    /// Insertion sort by `sortKey`. Avoids the generic `sorted(by:)` runtime path,
-    /// which the Wasm target cannot resolve for `Array<Expression>`. Keys are
-    /// precomputed once (each is a full recursive traversal) and reordered in
-    /// lockstep with their elements, rather than being recomputed on every
-    /// comparison as they were before.
-    private func sortBySortKey(_ array: inout [Expression]) {
-        var keys: [String] = []
-        var k = 0
-        while k < array.count {
-            keys.append(sortKey(array[k]))
-            k += 1
-        }
-
-        var i = 1
-        while i < array.count {
-            let value = array[i]
-            let key = keys[i]
-            var j = i - 1
-            while j >= 0, keys[j] > key {
-                array[j + 1] = array[j]
-                keys[j + 1] = keys[j]
-                j -= 1
-            }
-            array[j + 1] = value
-            keys[j + 1] = key
-            i += 1
-        }
-    }
-
     /// Insertion sort of collected factors by their base's `sortKey`, so that
     /// `x^2` and `y` order as `x^2 y` (by base) rather than by the built power node.
-    /// Like `sortBySortKey`, base keys are precomputed once and moved with their
-    /// factors.
+    /// Base keys are precomputed once and moved in lockstep with their factors,
+    /// avoiding the generic `sorted(by:)` runtime path the Wasm target cannot
+    /// resolve for `Array<Expression>`.
     private func sortFactorsByBase(_ array: inout [(base: Expression, exponent: Int)]) {
         var keys: [String] = []
         var k = 0

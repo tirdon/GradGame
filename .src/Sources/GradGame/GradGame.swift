@@ -3,7 +3,8 @@ struct GradGameMain {
     static func main() {
     }
 }
-//exponent max at 38 satisfy float32 
+// don't allow E, 2E3 input should be 2 10^3 instead.
+// separate Derivative like Simplifier. add Core Matrix Properties to both.
 @_expose(wasm, "add")
 @_cdecl("add")
 public func test_add(_ lhs: Int32, _ rhs: Int32) -> Int32 {

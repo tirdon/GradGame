@@ -11,3 +11,4 @@ test-results
 AGENTS.md
 CLAUDE.md
 BunServer/
+database.rules.json
