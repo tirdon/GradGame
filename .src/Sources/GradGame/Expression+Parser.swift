@@ -19,11 +19,23 @@ private final class ExpressionParser {
     private let tokens: [Token]
     private var index = 0
 
+    /// Caps the input so parsing, simplification, and TeX/JS rendering — all of
+    /// which recurse over the expression tree — cannot overflow the small Wasm
+    /// stack. A flat chain of N nodes recurses N deep, and a nesting of depth D
+    /// needs at least D tokens, so bounding the token count bounds every
+    /// recursion depth. Without this guard a long input traps (and on Wasm can
+    /// hard-crash the instance) instead of failing cleanly.
+    private static let maximumTokenCount = 256
+
     init(tokens: [Token]) {
         self.tokens = tokens
     }
 
     func parse() throws -> Expression {
+        if tokens.count > ExpressionParser.maximumTokenCount {
+            throw ExpressionParserError.expressionTooComplex
+        }
+
         guard current != .end else {
             throw ExpressionParserError.emptyExpression
         }

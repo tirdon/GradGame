@@ -3,10 +3,10 @@ struct GradGameMain {
     static func main() {
     }
 }
-
+//exponent max at 38 satisfy float32 
 @_expose(wasm, "add")
 @_cdecl("add")
-public func add(_ lhs: Int32, _ rhs: Int32) -> Int32 {
+public func test_add(_ lhs: Int32, _ rhs: Int32) -> Int32 {
     lhs + rhs
 }
 

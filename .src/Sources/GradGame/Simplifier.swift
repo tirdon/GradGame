@@ -104,7 +104,11 @@ struct Simplifier {
     /// A product as a signed integer coefficient, untouched non-integer numeric
     /// literals, and `base^exponent` factors keyed by structural equality.
     private struct ProductForm {
-        var coefficient = 1
+        // Folding uses Int — the same width on host and wasm32, and the only
+        // integer width this toolchain formats without trapping. Values beyond Int
+        // stay as literals (shown in scientific notation), so folding never needs an
+        // out-of-range Double→Int conversion (which traps) nor 64-bit arithmetic.
+        var coefficient: Int = 1
         var literals: [Expression] = []
         var factors: [(base: Expression, exponent: Int)] = []
 
@@ -114,7 +118,14 @@ struct Simplifier {
                 let leaf = leaves[index]
                 index += 1
                 if let value = simplifier.integerLiteralValue(leaf) {
-                    coefficient *= value
+                    let (product, overflow) = simplifier.multiplyChecked(coefficient, value)
+                    if overflow {
+                        // The folded coefficient would exceed Int; keep this factor
+                        // verbatim instead of trapping (e.g. 1353…365 * 1734…813).
+                        literals.append(leaf)
+                    } else {
+                        coefficient = product
+                    }
                     continue
                 }
                 if case .number = leaf {
@@ -126,8 +137,12 @@ struct Simplifier {
                 var cursor = 0
                 while cursor < factors.count {
                     if factors[cursor].base == base {
-                        factors[cursor].exponent += exponent
-                        merged = true
+                        let (sum, overflow) = simplifier.addChecked(factors[cursor].exponent, exponent)
+                        if !overflow {
+                            factors[cursor].exponent = sum
+                            merged = true
+                        }
+                        // On overflow, fall through to keep this factor unmerged.
                         break
                     }
                     cursor += 1
@@ -219,7 +234,8 @@ struct Simplifier {
         var signedTerms: [(sign: Int, term: Expression)] = []
         flattenSum(expression, sign: 1, into: &signedTerms)
 
-        var constant = 0
+        var constant: Int = 0
+        var extraConstants: [Int] = [] // constant chunks that could not be folded without overflow
         var groups: [(rest: Expression, coefficient: Int)] = []
 
         var index = 0
@@ -227,17 +243,28 @@ struct Simplifier {
             let entry = signedTerms[index]
             index += 1
             let split = splitCoefficient(simplify(entry.term))
-            let signed = entry.sign * split.coefficient
+            // Wrapping negation (`0 &- x`) never traps, even for Int.min.
+            let signed = entry.sign < 0 ? (0 &- split.coefficient) : split.coefficient
             if split.rest == .number("1") {
-                constant += signed
+                let (sum, overflow) = addChecked(constant, signed)
+                if overflow {
+                    extraConstants.append(constant)
+                    constant = signed
+                } else {
+                    constant = sum
+                }
                 continue
             }
             var merged = false
             var cursor = 0
             while cursor < groups.count {
                 if groups[cursor].rest == split.rest {
-                    groups[cursor].coefficient += signed
-                    merged = true
+                    let (sum, overflow) = addChecked(groups[cursor].coefficient, signed)
+                    if !overflow {
+                        groups[cursor].coefficient = sum
+                        merged = true
+                    }
+                    // On overflow, fall through to keep this term separate.
                     break
                 }
                 cursor += 1
@@ -255,7 +282,10 @@ struct Simplifier {
             }
             groupIndex += 1
         }
-        return buildSum(groups: collected, constant: constant)
+        if constant != 0 {
+            extraConstants.append(constant)
+        }
+        return buildSum(groups: collected, constants: extraConstants)
     }
 
     private func flattenSum(_ expression: Expression, sign: Int, into terms: inout [(sign: Int, term: Expression)]) {
@@ -287,15 +317,20 @@ struct Simplifier {
         return (coefficient, buildProduct(form))
     }
 
-    private func buildSum(groups: [(rest: Expression, coefficient: Int)], constant: Int) -> Expression {
+    private func buildSum(groups: [(rest: Expression, coefficient: Int)], constants: [Int]) -> Expression {
         var terms: [(coefficient: Int, rest: Expression?)] = []
         var index = 0
         while index < groups.count {
             terms.append((groups[index].coefficient, groups[index].rest))
             index += 1
         }
-        if constant != 0 {
-            terms.append((constant, nil))
+        var constantIndex = 0
+        while constantIndex < constants.count {
+            let value = constants[constantIndex]
+            constantIndex += 1
+            if value != 0 {
+                terms.append((value, nil))
+            }
         }
         if terms.isEmpty { return .number("0") }
 
@@ -304,7 +339,10 @@ struct Simplifier {
         while termIndex < terms.count {
             let term = terms[termIndex]
             termIndex += 1
-            let magnitude = abs(term.coefficient)
+            // Coefficients are bounded to ±Int32.max (see integerLiteralValue), so
+            // negation never hits Int.min and `.magnitude`/UInt — whose `Words`
+            // conformance this toolchain can't format — is avoided.
+            let magnitude = term.coefficient < 0 ? -term.coefficient : term.coefficient
             let termExpression: Expression
             if let rest = term.rest {
                 termExpression = buildTerm(magnitude: magnitude, rest: rest)
@@ -347,8 +385,18 @@ struct Simplifier {
     fileprivate func integerLiteralValue(_ expression: Expression) -> Int? {
         switch expression {
         case let .number(text):
-            if let integer = Int(text) { return integer }
-            if let value = Double(text), value == value.rounded(), abs(value) < 9_007_199_254_740_992 {
+            // E-notation literals are preserved (rendered as m × 10^e), not folded.
+            if containsExponentMarker(text) { return nil }
+            // Fold only integers within ±Int32.max. Anything larger is kept as a
+            // literal and shown in scientific notation. The ±Int32.max bound keeps
+            // behavior identical on host (Int is 64-bit) and wasm32 (Int is 32-bit),
+            // keeps every folded magnitude negatable without trapping, and makes the
+            // Double→Int conversion safe (a bare `Int(Double)` traps out of range).
+            if let integer = Int(text), integer >= -2_147_483_647, integer <= 2_147_483_647 {
+                return integer
+            }
+            if let value = Double(text), value == value.rounded(),
+               value >= -2_147_483_647, value <= 2_147_483_647 {
                 return Int(value)
             }
             return nil
@@ -359,6 +407,44 @@ struct Simplifier {
         default:
             return nil
         }
+    }
+
+    // MARK: Overflow-safe Int arithmetic
+    //
+    // Overflow is detected with a Double magnitude check rather than the stdlib's
+    // `multipliedReportingOverflow`/`addingReportingOverflow`, keeping the fold path
+    // clear of the generic FixedWidthInteger machinery this SwiftWasm toolchain
+    // mis-resolves. The check is exact near the ±Int32.max bound (well below 2^53),
+    // and the result uses wrapping operators, which never trap.
+
+    private static let foldLimit = 2_147_483_647.0 // Int32.max; symmetric ±bound
+
+    private func multiplyChecked(_ a: Int, _ b: Int) -> (value: Int, overflow: Bool) {
+        let product = Double(a) * Double(b)
+        if product > Simplifier.foldLimit || product < -Simplifier.foldLimit {
+            return (0, true)
+        }
+        return (a &* b, false)
+    }
+
+    private func addChecked(_ a: Int, _ b: Int) -> (value: Int, overflow: Bool) {
+        let sum = Double(a) + Double(b)
+        if sum > Simplifier.foldLimit || sum < -Simplifier.foldLimit {
+            return (0, true)
+        }
+        return (a &+ b, false)
+    }
+
+    private func containsExponentMarker(_ text: String) -> Bool {
+        // Index a materialized byte array rather than iterating `text.utf8` with
+        // for-in: that Sequence iteration traps on this SwiftWasm toolchain.
+        let bytes = Array(text.utf8)
+        var index = 0
+        while index < bytes.count {
+            if bytes[index] == 69 || bytes[index] == 101 { return true } // 'E' or 'e'
+            index += 1
+        }
+        return false
     }
 
     private func isZeroLiteral(_ expression: Expression) -> Bool {
@@ -392,13 +478,16 @@ struct Simplifier {
     /// Only emits literals for integer-valued results, so the renderer never shows
     /// floating-point artifacts such as `0.30000000000000004`.
     private func integerExpression(_ value: Double) -> Expression? {
-        guard value.isFinite, value == value.rounded(), abs(value) < 9_007_199_254_740_992 else {
-            return nil
+        guard value.isFinite, value == value.rounded(),
+              value >= -2_147_483_647, value <= 2_147_483_647 else {
+            return nil // beyond ±Int32.max: leave the operation symbolic rather than fold
         }
         return makeInteger(Int(value))
     }
 
     private func makeInteger(_ value: Int) -> Expression {
+        // value is bounded to ±Int32.max, so `-value` cannot overflow and we avoid
+        // `.magnitude` (UInt), whose `Words` conformance this toolchain can't format.
         value < 0 ? .unary(.minus, .number("\(-value)")) : .number("\(value)")
     }
 
@@ -448,35 +537,58 @@ struct Simplifier {
     }
 
     /// Insertion sort by `sortKey`. Avoids the generic `sorted(by:)` runtime path,
-    /// which the Wasm target cannot resolve for `Array<Expression>`.
+    /// which the Wasm target cannot resolve for `Array<Expression>`. Keys are
+    /// precomputed once (each is a full recursive traversal) and reordered in
+    /// lockstep with their elements, rather than being recomputed on every
+    /// comparison as they were before.
     private func sortBySortKey(_ array: inout [Expression]) {
+        var keys: [String] = []
+        var k = 0
+        while k < array.count {
+            keys.append(sortKey(array[k]))
+            k += 1
+        }
+
         var i = 1
         while i < array.count {
             let value = array[i]
-            let key = sortKey(value)
+            let key = keys[i]
             var j = i - 1
-            while j >= 0, sortKey(array[j]) > key {
+            while j >= 0, keys[j] > key {
                 array[j + 1] = array[j]
+                keys[j + 1] = keys[j]
                 j -= 1
             }
             array[j + 1] = value
+            keys[j + 1] = key
             i += 1
         }
     }
 
     /// Insertion sort of collected factors by their base's `sortKey`, so that
     /// `x^2` and `y` order as `x^2 y` (by base) rather than by the built power node.
+    /// Like `sortBySortKey`, base keys are precomputed once and moved with their
+    /// factors.
     private func sortFactorsByBase(_ array: inout [(base: Expression, exponent: Int)]) {
+        var keys: [String] = []
+        var k = 0
+        while k < array.count {
+            keys.append(sortKey(array[k].base))
+            k += 1
+        }
+
         var i = 1
         while i < array.count {
             let value = array[i]
-            let key = sortKey(value.base)
+            let key = keys[i]
             var j = i - 1
-            while j >= 0, sortKey(array[j].base) > key {
+            while j >= 0, keys[j] > key {
                 array[j + 1] = array[j]
+                keys[j + 1] = keys[j]
                 j -= 1
             }
             array[j + 1] = value
+            keys[j + 1] = key
             i += 1
         }
     }

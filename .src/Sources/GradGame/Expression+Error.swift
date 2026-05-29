@@ -9,6 +9,7 @@ enum ExpressionParserError: Error, Equatable, CustomStringConvertible {
     case missingFunctionArgument(String)
     case wrongArgumentCount(String, expected: Int, received: Int)
     case trailingInput(String)
+    case expressionTooComplex
 
     var description: String {
         switch self {
@@ -32,6 +33,8 @@ enum ExpressionParserError: Error, Equatable, CustomStringConvertible {
             return "Function '\(name)' expects \(expected) argument(s), got \(received)."
         case let .trailingInput(found):
             return "Unexpected input after expression: \(found)."
+        case .expressionTooComplex:
+            return "Expression is too complex. Try a shorter one."
         }
     }
 }

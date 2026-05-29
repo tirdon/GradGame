@@ -10,6 +10,20 @@
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
     let wasmExports = null;
+    let wasmModule = null;
+    let recovering = null;
+    let renderTimer = null;
+
+    // Thrown when a Wasm call traps (e.g. a stack overflow while parsing or
+    // simplifying a deeply nested expression). A trap leaves the instance
+    // unusable, so the caller must surface a message and re-instantiate.
+    class WasmTrapError extends Error {
+        constructor(cause) {
+            super('Expression too complex.');
+            this.name = 'WasmTrapError';
+            this.cause = cause;
+        }
+    }
 
     function writeUint32(memory, pointer, value) {
         new DataView(memory.buffer).setUint32(pointer, value, true);
@@ -39,7 +53,14 @@
             memoryBytes().set(bytes, inputPointer);
         }
 
-        const outputPointer = wasmExports[exportName](inputPointer, bytes.length, simplify ? 1 : 0);
+        let outputPointer;
+        try {
+            outputPointer = wasmExports[exportName](inputPointer, bytes.length, simplify ? 1 : 0);
+        } catch (error) {
+            // The instance is now poisoned; its leaked input allocation is reclaimed
+            // when the instance is replaced, so there is nothing safe to free here.
+            throw new WasmTrapError(error);
+        }
         const outputLength = wasmExports.gradGameLastResultLength();
         const ok = wasmExports.gradGameLastParseSucceeded() === 1;
         const text = decodeWasmString(outputPointer, outputLength);
@@ -166,11 +187,56 @@
             setOutput(evalResult, value, 'pass');
             evalResult.dataset.value = value;
         } catch (error) {
+            // WasmTrapError carries the user-facing 'Expression too complex.' message.
             setTexOutput(error.message, 'fail', false);
             setOutput(jsResult, error.message, 'fail');
             setOutput(evalResult, 'NaN', 'fail');
             console.error(error);
+            if (error instanceof WasmTrapError) {
+                // The instance is dead. Replace it so the next keystroke works again.
+                // Do not re-render here: the offending input is still on screen, and
+                // re-parsing it would just trap and recover in a tight loop.
+                recoverWasm();
+            }
         }
+    }
+
+    // Debounced entry point for input events: a long expression should not be
+    // re-parsed on every keystroke, which is both wasteful and the surest way to
+    // overflow the Wasm stack repeatedly.
+    function scheduleRender() {
+        if (renderTimer) {
+            clearTimeout(renderTimer);
+        }
+        renderTimer = setTimeout(() => {
+            renderTimer = null;
+            renderExpression();
+        }, 120);
+    }
+
+    async function instantiate() {
+        const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1 };
+        const instance = await WebAssembly.instantiate(wasmModule, imports);
+        wasmExports = instance.exports;
+        window.gradGameWasm = wasmExports;
+    }
+
+    // Drops the poisoned instance immediately (so renderExpression short-circuits
+    // on its `!wasmExports` guard instead of calling into a dead module) and builds
+    // a fresh one from the already-compiled module. Guarded so overlapping traps
+    // share a single re-instantiation.
+    function recoverWasm() {
+        wasmExports = null;
+        if (recovering || !wasmModule) {
+            return;
+        }
+        recovering = instantiate()
+            .catch((error) => {
+                console.error('Wasm recovery failed:', error);
+            })
+            .finally(() => {
+                recovering = null;
+            });
     }
 
     const wasiSnapshotPreview1 = {
@@ -214,10 +280,12 @@
 
         const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1 };
         const responseCopy = response.clone();
-        const { instance } = await WebAssembly.instantiateStreaming(response, imports).catch(
+        const { module, instance } = await WebAssembly.instantiateStreaming(response, imports).catch(
             async () => WebAssembly.instantiate(await responseCopy.arrayBuffer(), imports)
         );
 
+        // Keep the compiled module so a trapped instance can be cheaply rebuilt.
+        wasmModule = module;
         wasmExports = instance.exports;
         window.gradGameWasm = wasmExports;
 
@@ -227,9 +295,9 @@
             result.dataset.status = value === 5 ? 'pass' : 'fail';
         }
 
-        expressionInput?.addEventListener('input', renderExpression);
-        evalX?.addEventListener('input', renderExpression);
-        evalY?.addEventListener('input', renderExpression);
+        expressionInput?.addEventListener('input', scheduleRender);
+        evalX?.addEventListener('input', scheduleRender);
+        evalY?.addEventListener('input', scheduleRender);
         renderExpression();
     } catch (error) {
         if (result) {

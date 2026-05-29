@@ -66,7 +66,7 @@ final class JavaScriptRenderer {
         _ rhs: Expression,
         variableOverrides: [String: String]
     ) -> String {
-        let precedence = precedence(of: .binary(operation, lhs, rhs))
+        let precedence = precedence(ofBinary: operation)
 
         switch operation {
         case .add:
@@ -160,14 +160,21 @@ final class JavaScriptRenderer {
         case .unary:
             return 3
         case let .binary(operation, _, _):
-            switch operation {
-            case .add, .subtract:
-                return 1
-            case .multiply, .implicitMultiply, .divide:
-                return 2
-            case .power:
-                return 4
-            }
+            return precedence(ofBinary: operation)
+        }
+    }
+
+    /// A binary node's precedence depends only on its operator, so callers that
+    /// already hold the operator avoid allocating a throwaway `.binary` node
+    /// (an `indirect` enum, hence heap-boxed) just to read it back.
+    private func precedence(ofBinary operation: BinaryOperator) -> Int {
+        switch operation {
+        case .add, .subtract:
+            return 1
+        case .multiply, .implicitMultiply, .divide:
+            return 2
+        case .power:
+            return 4
         }
     }
 }
