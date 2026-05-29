@@ -1,10 +1,10 @@
 (() => {
     const canvas = document.getElementById('canvas-new');
     const ctx = canvas.getContext('2d');
-    const card = document.getElementById('session-new');
+    const host = canvas.parentElement || canvas;
 
     function resizeCanvas() {
-        const rect = card.getBoundingClientRect();
+        const rect = host.getBoundingClientRect();
         canvas.width = rect.width;
         canvas.height = rect.height;
     }
@@ -13,7 +13,7 @@
     window.addEventListener('resize', resizeCanvas);
 
     const observer = new ResizeObserver(() => resizeCanvas());
-    observer.observe(card);
+    observer.observe(host);
 
     const particles = [];
     const particleCount = 45;
@@ -57,32 +57,43 @@
     function animate() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        let w;
-        let h;
-        const targetRatio = 4 / 3;
-        const canvasRatio = canvas.width / canvas.height;
-
-        if (canvasRatio > targetRatio) {
-            h = canvas.height;
-            w = h * targetRatio;
-        } else {
-            w = canvas.width;
-            h = w / targetRatio;
-        }
-
-        const x = (canvas.width - w) / 2;
-        const y = (canvas.height - h) / 2;
-
-        const grad = ctx.createLinearGradient(x, y, x + w, y + h);
-        grad.addColorStop(0, 'rgba(99, 102, 241, 0.07)');
-        grad.addColorStop(1, 'rgba(139, 92, 246, 0.07)');
+        const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+        grad.addColorStop(0, 'rgba(37, 99, 235, 0.08)');
+        grad.addColorStop(1, 'rgba(15, 118, 110, 0.07)');
 
         ctx.fillStyle = grad;
-        ctx.fillRect(x, y, w, h);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        ctx.strokeStyle = 'rgba(99, 102, 241, 0.2)';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(100, 116, 139, 0.12)';
+        ctx.lineWidth = 1;
+
+        for (let x = 48; x < canvas.width; x += 48) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, canvas.height);
+            ctx.stroke();
+        }
+
+        for (let y = 48; y < canvas.height; y += 48) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvas.width, y);
+            ctx.stroke();
+        }
+
+        ctx.strokeStyle = 'rgba(37, 99, 235, 0.28)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(canvas.width * 0.08, canvas.height * 0.68);
+        ctx.bezierCurveTo(
+            canvas.width * 0.28,
+            canvas.height * 0.28,
+            canvas.width * 0.56,
+            canvas.height * 0.78,
+            canvas.width * 0.9,
+            canvas.height * 0.34
+        );
+        ctx.stroke();
 
         particles.forEach((particle) => {
             particle.update();

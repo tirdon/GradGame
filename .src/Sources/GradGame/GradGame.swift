@@ -32,9 +32,9 @@ public func gradGameDeallocate(_ pointer: UnsafeMutableRawPointer?, _ byteCount:
 
 @_expose(wasm, "parseExpressionToTex")
 @_cdecl("parseExpressionToTex")
-public func parseExpressionToTex(_ inputPointer: UnsafePointer<UInt8>?, _ inputLength: Int32) -> UnsafePointer<UInt8>? {
+public func parseExpressionToTex(_ inputPointer: UnsafePointer<UInt8>?, _ inputLength: Int32, _ simplify: Int32) -> UnsafePointer<UInt8>? {
     parseExpressionInput(inputPointer, inputLength) { input in
-        try parseExpressionToTeX(input)
+        try parseExpressionToTeX(input, simplify: simplify != 0)
     }
 }
 

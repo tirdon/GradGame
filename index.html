@@ -31,17 +31,22 @@
         <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     </head>
     <body>
-        <div class="card" id="session-new">
-            <canvas id="canvas-new"></canvas>
-            <div class="card-content">
-                <span class="card-icon">🎓</span>
-                <h2>New Adventure</h2>
-                
-                <output id="wasm-add-result" aria-live="polite">Loading Swift Wasm...</output>
-            </div>
-        </div>
-        <div class="expression-row">
-            <input class="card" id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false">
+        <main class="game-shell" id="session-new" aria-label="GradGame session">
+            <section class="canvas-frame" aria-label="Gradient game canvas">
+                <canvas id="canvas-new"></canvas>
+                <div class="canvas-title">
+                    <span class="canvas-mark" aria-hidden="true">🎓</span>
+                    <span>GradGame</span>
+                </div>
+            </section>
+
+            <section class="realtime-panel" aria-label="Realtime expression output">
+                <div class="realtime-grid">
+                    <output id="tex-parser-result" aria-live="polite">Loading parser...</output>
+                </div>
+                <input id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false" aria-label="Expression input">
+            </section>
+
             <button class="help-btn" id="help-toggle" type="button" aria-label="Help">
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="10" cy="10" r="9" stroke="currentColor" stroke-width="1.5"/>
@@ -49,20 +54,7 @@
                     <circle cx="10" cy="14" r="0.75" fill="currentColor"/>
                 </svg>
             </button>
-        </div>
-        <div id="evaluation-controls" aria-label="Expression variables">
-            <label>
-                <span>x</span>
-                <input id="eval-x" type="number" value="1" step="any">
-            </label>
-            <label>
-                <span>y</span>
-                <input id="eval-y" type="number" value="1" step="any">
-            </label>
-            <output id="js-eval-result" aria-live="polite">NaN</output>
-        </div>
-        <output id="tex-parser-result" aria-live="polite">Loading parser...</output>
-        <output id="js-parser-result" aria-live="polite">Loading parser...</output>
+        </main>
 
         <!-- Help Popup Overlay -->
         <div class="help-overlay" id="help-overlay" hidden>

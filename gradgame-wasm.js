@@ -27,7 +27,7 @@
         return decoder.decode(memoryBytes().subarray(pointer, pointer + length));
     }
 
-    function parseExpression(input, exportName) {
+    function parseExpression(input, exportName, simplify = false) {
         const bytes = encoder.encode(input);
         let inputPointer = 0;
 
@@ -39,7 +39,7 @@
             memoryBytes().set(bytes, inputPointer);
         }
 
-        const outputPointer = wasmExports[exportName](inputPointer, bytes.length);
+        const outputPointer = wasmExports[exportName](inputPointer, bytes.length, simplify ? 1 : 0);
         const outputLength = wasmExports.gradGameLastResultLength();
         const ok = wasmExports.gradGameLastParseSucceeded() === 1;
         const text = decodeWasmString(outputPointer, outputLength);
@@ -53,7 +53,7 @@
     }
 
     function parseToTeX(input) {
-        return parseExpression(input, 'parseExpressionToTex');
+        return parseExpression(input, 'parseExpressionToTex', true);
     }
 
     function parseToJavaScript(input) {
@@ -126,7 +126,7 @@
     }
 
     function renderExpression() {
-        if (!wasmExports || !texResult || !jsResult || !expressionInput) {
+        if (!wasmExports || !texResult || !expressionInput) {
             return;
         }
 
@@ -145,6 +145,11 @@
             if (!tex.ok) {
                 setOutput(jsResult, tex.text, 'fail');
                 setOutput(evalResult, 'NaN', 'fail');
+                return;
+            }
+
+            // The JS-eval pipeline below is optional; skip it when its UI is absent.
+            if (!jsResult) {
                 return;
             }
 
@@ -217,16 +222,20 @@
         window.gradGameWasm = wasmExports;
 
         const value = wasmExports.add(2, 3);
-        result.textContent = `Swift add(2, 3) = ${value}`;
-        result.dataset.status = value === 5 ? 'pass' : 'fail';
+        if (result) {
+            result.textContent = `Swift add(2, 3) = ${value}`;
+            result.dataset.status = value === 5 ? 'pass' : 'fail';
+        }
 
         expressionInput?.addEventListener('input', renderExpression);
         evalX?.addEventListener('input', renderExpression);
         evalY?.addEventListener('input', renderExpression);
         renderExpression();
     } catch (error) {
-        result.textContent = `Swift Wasm test failed: ${error.message}`;
-        result.dataset.status = 'fail';
+        if (result) {
+            result.textContent = `Swift Wasm test failed: ${error.message}`;
+            result.dataset.status = 'fail';
+        }
         if (texResult) {
             setTexOutput('Parser unavailable.', 'fail', false);
         }
