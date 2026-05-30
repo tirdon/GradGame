@@ -570,7 +570,7 @@ input {
 }
 
 .history-panel {
-    width: min(320px, 72vw);
+    width: min(360px, 78vw);
     max-height: 0;
     overflow: hidden;
     opacity: 0;
@@ -646,13 +646,15 @@ input {
 }
 
 .history-item {
+    --history-player-color: var(--accent);
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: 0.28rem;
     width: 100%;
-    padding: 0.5rem 0.65rem;
+    padding: 0.5rem 0.65rem 0.5rem 0.75rem;
     border: 0;
-    border-radius: 12px;
+    border-left: 3px solid var(--history-player-color);
+    border-radius: 8px;
     background: transparent;
     color: var(--text-primary);
     cursor: pointer;
@@ -666,9 +668,44 @@ input {
     outline: 0;
 }
 
+.history-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+    min-width: 0;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1.15;
+    text-transform: uppercase;
+}
+
+.history-player-dot {
+    flex: 0 0 auto;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 999px;
+    background: var(--history-player-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--history-player-color) 24%, transparent);
+}
+
+.history-player-name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-item-outcome {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--text-secondary);
+}
+
 .history-item-tex {
     overflow: hidden;
-    color: var(--accent);
+    color: var(--history-player-color);
     font-size: 0.95rem;
     line-height: 1.25;
     text-overflow: ellipsis;

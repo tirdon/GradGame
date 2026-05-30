@@ -13,6 +13,7 @@
  *   players/{0..3}: { uid, name, token, x, y, alive, ready, score, color, joinedAt }
  *   obstacles: [ { x, y, r }, … ]
  *   shot:    { seq, by, expr, js, path, outcome, impact, ts }   // latest shot only
+ *   history/{seq}: { seq, round, by, name, color, expr, tex, outcome, hitSeat, ts }
  *
  * Authority: client-side. The shooter computes its own outcome and writes the
  * shot + the resulting elimination/turn transition in one multi-path update;
@@ -32,6 +33,7 @@ import {
 const GAME_PATH = 'games/main';
 const KEY_TOKEN = 'gradgame:token';
 const KEY_NAME  = 'gradgame:name';
+const MAX_HISTORY_ENTRIES = 30;
 
 let started = false;
 
@@ -56,13 +58,14 @@ export function start({ db, uid }) {
     }, 1800);
 
     /* ── Local state ───────────────────────────────────────────────────── */
-    let state = null;           // { meta, players[4], obstacles[], shot }
+    let state = null;           // { meta, players[4], obstacles[], shot, history[] }
     let mySeat = -1;
     let serverOffset = 0;
     let seenSeq = 0;
     let lastRoundKey = '';
     let emptyResetPending = false;
     const shotQueue = [];
+    const observedHistory = [];
     let activeShot = null;      // { by, path, outcome, impact, t0, dur, doneAt }
     const persistentArcs = [];  // resolved arcs kept (faint) for the round
     let myCompiled = null;
@@ -113,18 +116,20 @@ export function start({ db, uid }) {
             ? v.obstacles
             : (v.obstacles ? Object.values(v.obstacles) : []);
         let shot = v.shot || null;
+        let history = parseHistory(v.history, players);
 
         if (!players.some(Boolean)) {
             if (needsEmptyGameReset(meta, obstacles, shot)) resetEmptyGame();
             meta = emptyLobbyMeta();
             obstacles = [];
             shot = null;
+            history = [];
             clearRoundEffects();
         } else if (!shot) {
             seenSeq = 0;
         }
 
-        state = { meta, players, obstacles, shot };
+        state = { meta, players, obstacles, shot, history };
 
         mySeat = players.findIndex((p) => p && (p.uid === uid || p.token === token));
 
@@ -132,6 +137,9 @@ export function start({ db, uid }) {
         const roundKey = `${meta.round || 0}:${meta.status}`;
         if (roundKey !== lastRoundKey) {
             persistentArcs.length = 0;
+            if (meta.status === 'lobby' || (meta.status === 'playing' && !shot)) {
+                observedHistory.length = 0;
+            }
             lastRoundKey = roundKey;
             if (meta.status !== 'playing') { activeShot = null; shotQueue.length = 0; }
         }
@@ -140,9 +148,12 @@ export function start({ db, uid }) {
         if (shot && shot.seq && shot.seq !== seenSeq) {
             seenSeq = shot.seq;
             shotQueue.push(shot);
+            recordObservedShot(shot, players, meta.round || 0);
         }
 
+        state.history = mergeHistory(state.history, observedHistory);
         updateHUD();
+        updateHistoryPanel();
         maybeStart();
     }
 
@@ -234,7 +245,10 @@ export function start({ db, uid }) {
         };
         console.log('[GraphWar] starting match: seats', occ, 'positions', positions);
         update(gRef(), updates)
-            .then(() => console.log('[GraphWar] start write OK'))
+            .then(() => {
+                console.log('[GraphWar] start write OK');
+                clearSharedHistory();
+            })
             .catch((err) => {
                 console.error('[GraphWar] start write FAILED (re-paste database.rules.json — a client must be able to write other seats):', err);
                 toast('Start blocked — update database rules');
@@ -255,6 +269,7 @@ export function start({ db, uid }) {
             return;
         }
         const me = state.players[mySeat];
+        const expr = inputEl.value.trim();
         const js = readParsedJS();
         console.log('[GraphWar] fire js=', JSON.stringify(js));
         const f = compile(js);
@@ -268,13 +283,19 @@ export function start({ db, uid }) {
         });
 
         const seq = (state.shot && state.shot.seq ? state.shot.seq : 0) + 1;
+        const shot = {
+            seq, by: mySeat, expr, js, dir,
+            outcome: sim.outcome, impact: sim.impact || null,
+            ts: serverTimestamp(),
+        };
+        const historyEntry = historyEntryForShot({
+            ...shot,
+            round: state.meta.round || 1,
+            hitSeat: sim.hitSeat >= 0 ? sim.hitSeat : null,
+        }, state.players);
         const updates = {
             // No `path`: every client rebuilds it from js + dir + impact (resampleArc).
-            shot: {
-                seq, by: mySeat, expr: inputEl.value.trim(), js, dir,
-                outcome: sim.outcome, impact: sim.impact || null,
-                ts: serverTimestamp(),
-            },
+            shot,
         };
 
         const alive = state.players.map((p) => p && p.alive);
@@ -308,7 +329,10 @@ export function start({ db, uid }) {
 
         console.log('[GraphWar] firing shot:', { outcome: sim.outcome, hitSeat: sim.hitSeat, pathLen: sim.path.length, nextTurn: meta.turnIndex });
         update(gRef(), updates)
-            .then(() => console.log('[GraphWar] shot write OK'))
+            .then(() => {
+                console.log('[GraphWar] shot write OK');
+                writeHistoryEntry(historyEntry);
+            })
             .catch((err) => { console.error('[GraphWar] shot write FAILED (check RTDB rules):', err); toast('Write blocked — check database rules'); });
         inputEl.value = '';
         aimPoints = null;
@@ -396,6 +420,9 @@ export function start({ db, uid }) {
         if (emptyResetPending) return;
         emptyResetPending = true;
         update(gRef(), emptyLobbyUpdates())
+            .then(() => {
+                clearSharedHistory();
+            })
             .catch((err) => {
                 console.error('[GraphWar] empty lobby reset failed', err);
             })
@@ -407,9 +434,114 @@ export function start({ db, uid }) {
     function clearRoundEffects() {
         seenSeq = 0;
         shotQueue.length = 0;
+        observedHistory.length = 0;
         activeShot = null;
         persistentArcs.length = 0;
         aimPoints = null;
+        if (state) state.history = [];
+        updateHistoryPanel();
+    }
+
+    function parseHistory(raw, players) {
+        const values = Array.isArray(raw)
+            ? raw.filter(Boolean)
+            : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+        return values
+            .map((entry) => normalizeHistoryEntry(entry, players))
+            .filter(Boolean)
+            .sort(compareHistoryEntries)
+            .slice(-MAX_HISTORY_ENTRIES);
+    }
+
+    function historyEntryForShot(shot, players) {
+        const tex = parseInputToTeX(shot.expr || '');
+        return normalizeHistoryEntry({
+            seq: shot.seq,
+            round: shot.round || 0,
+            by: shot.by,
+            name: players[shot.by]?.name,
+            color: PLAYER_COLOR_HEX[shot.by],
+            expr: shot.expr,
+            tex: tex.ok ? tex.text : '',
+            ok: tex.ok,
+            outcome: shot.outcome,
+            hitSeat: shot.hitSeat ?? null,
+            ts: shot.ts || Date.now(),
+        }, players);
+    }
+
+    function normalizeHistoryEntry(entry, players) {
+        if (!entry || typeof entry.expr !== 'string' || !entry.expr.trim()) return null;
+        const seat = Number(entry.by);
+        if (!Number.isInteger(seat) || seat < 0 || seat > 3) return null;
+        const player = players[seat];
+        const seq = Number(entry.seq) || 0;
+        return {
+            seq,
+            round: Number(entry.round) || 0,
+            by: seat,
+            name: String(entry.name || player?.name || `Player ${seat + 1}`).slice(0, 24),
+            color: validPlayerColor(entry.color) ? entry.color : PLAYER_COLOR_HEX[seat],
+            expr: entry.expr.trim(),
+            tex: typeof entry.tex === 'string' ? entry.tex : '',
+            ok: entry.ok !== false,
+            outcome: typeof entry.outcome === 'string' ? entry.outcome : '',
+            hitSeat: Number.isInteger(entry.hitSeat) ? entry.hitSeat : null,
+            ts: typeof entry.ts === 'number' ? entry.ts : 0,
+        };
+    }
+
+    function validPlayerColor(color) {
+        return typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color);
+    }
+
+    function compareHistoryEntries(a, b) {
+        return (a.round - b.round) || (a.seq - b.seq) || (a.ts - b.ts);
+    }
+
+    function mergeHistory(...groups) {
+        const byKey = new Map();
+        for (const group of groups) {
+            for (const entry of group || []) {
+                byKey.set(`${entry.round}:${entry.seq}`, entry);
+            }
+        }
+        return [...byKey.values()].sort(compareHistoryEntries).slice(-MAX_HISTORY_ENTRIES);
+    }
+
+    function recordObservedShot(shot, players, round) {
+        const entry = historyEntryForShot({ ...shot, round }, players);
+        if (!entry) return;
+        const key = `${entry.round}:${entry.seq}`;
+        const existing = observedHistory.findIndex((item) => `${item.round}:${item.seq}` === key);
+        if (existing >= 0) observedHistory.splice(existing, 1);
+        observedHistory.push(entry);
+        observedHistory.sort(compareHistoryEntries);
+        if (observedHistory.length > MAX_HISTORY_ENTRIES) {
+            observedHistory.splice(0, observedHistory.length - MAX_HISTORY_ENTRIES);
+        }
+    }
+
+    function writeHistoryEntry(entry) {
+        if (!entry) return;
+        set(gRef(`history/${entry.seq}`), {
+            ...entry,
+            ts: serverTimestamp(),
+        }).catch((err) => {
+            console.warn('[GraphWar] history write skipped (update database.rules.json for shared history):', err);
+        });
+    }
+
+    function clearSharedHistory() {
+        remove(gRef('history')).catch((err) => {
+            console.warn('[GraphWar] history clear skipped:', err);
+        });
+    }
+
+    function updateHistoryPanel() {
+        document.dispatchEvent(new CustomEvent('gradgame:history', {
+            detail: { entries: state ? state.history : [] },
+        }));
     }
 
     /* ════════════════════════════════════════════════════════════════════
@@ -652,6 +784,17 @@ export function start({ db, uid }) {
         }
         const el = document.getElementById('js-parser-result');
         return (el && el.dataset && el.dataset.js) ? el.dataset.js : '';
+    }
+    function parseInputToTeX(input) {
+        if (input && window.gradGameParse) {
+            try {
+                const r = window.gradGameParse.toTeX(input);
+                return r && r.ok ? { ok: true, text: r.text } : { ok: false, text: '' };
+            } catch (e) {
+                console.error('[GraphWar] TeX parse failed', e);
+            }
+        }
+        return { ok: false, text: '' };
     }
     function readParsedJS() {
         return parseInputToJS(inputEl ? inputEl.value.trim() : '');

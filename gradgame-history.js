@@ -1,11 +1,7 @@
-// History panel (bottom-trailing). Listens for `gradgame:commit` events fired by
-// gradgame-wasm.js when an expression is committed (Enter), keeps a de-duplicated,
-// most-recent-first list persisted to localStorage, renders each entry via KaTeX,
-// and restores an expression to the input when its row is clicked.
+// Match history panel. The game controller publishes `gradgame:history` events
+// with fired expressions from every player; this file only owns presentation and
+// restoring an expression to the input when a row is clicked.
 (() => {
-    const STORAGE_KEY = 'gradgame:history';
-    const MAX_ENTRIES = 30;
-
     const dock = document.getElementById('history-dock');
     const toggle = document.getElementById('history-toggle');
     const list = document.getElementById('history-list');
@@ -16,33 +12,10 @@
         return;
     }
 
-    let entries = loadEntries();
+    let entries = [];
 
-    function loadEntries() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (!raw) {
-                return [];
-            }
-            const parsed = JSON.parse(raw);
-            if (!Array.isArray(parsed)) {
-                return [];
-            }
-            return parsed
-                .filter((entry) => entry && typeof entry.input === 'string')
-                .slice(0, MAX_ENTRIES);
-        } catch (error) {
-            return [];
-        }
-    }
-
-    function saveEntries() {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-        } catch (error) {
-            // Storage may be unavailable (private mode, quota); history is still
-            // usable for the current session, so swallow the error.
-        }
+    if (clearButton) {
+        clearButton.hidden = true;
     }
 
     function setOpen(open) {
@@ -50,25 +23,38 @@
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
-    function record(detail) {
-        const value = typeof detail.input === 'string' ? detail.input.trim() : '';
-        if (!value) {
-            return;
-        }
-
-        // Drop any earlier identical entry, then prepend so the newest is on top.
-        entries = entries.filter((entry) => entry.input !== value);
-        entries.unshift({
-            input: value,
-            tex: detail.ok ? detail.tex : '',
-            ok: Boolean(detail.ok),
-        });
-        if (entries.length > MAX_ENTRIES) {
-            entries.length = MAX_ENTRIES;
-        }
-
-        saveEntries();
+    function setEntries(nextEntries) {
+        entries = Array.isArray(nextEntries)
+            ? nextEntries.map(normalizeEntry).filter(Boolean)
+            : [];
         render();
+    }
+
+    function normalizeEntry(entry) {
+        if (!entry || typeof entry.expr !== 'string' || !entry.expr.trim()) {
+            return null;
+        }
+
+        const seat = Number(entry.by);
+        if (!Number.isInteger(seat) || seat < 0 || seat > 3) {
+            return null;
+        }
+
+        return {
+            seq: Number(entry.seq) || 0,
+            by: seat,
+            name: String(entry.name || `Player ${seat + 1}`).slice(0, 24),
+            color: validColor(entry.color) ? entry.color : '#6366f1',
+            expr: entry.expr.trim(),
+            tex: typeof entry.tex === 'string' ? entry.tex : '',
+            ok: entry.ok !== false,
+            outcome: typeof entry.outcome === 'string' ? entry.outcome : '',
+            hitSeat: Number.isInteger(entry.hitSeat) ? entry.hitSeat : null,
+        };
+    }
+
+    function validColor(color) {
+        return typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color);
     }
 
     function restore(value) {
@@ -76,7 +62,6 @@
             return;
         }
         inputField.value = value;
-        // Trigger the same debounced re-render path as typing.
         inputField.dispatchEvent(new Event('input', { bubbles: true }));
         inputField.focus();
         inputField.setSelectionRange(value.length, value.length);
@@ -88,71 +73,97 @@
         if (!entries.length) {
             const empty = document.createElement('li');
             empty.className = 'history-empty';
-            empty.textContent = 'No expressions yet.';
+            empty.textContent = 'No shots yet.';
             list.appendChild(empty);
             return;
         }
 
-        // Render oldest-first (inverse of the newest-first storage order), so the
-        // most recent commit lands at the bottom, nearest the input.
-        for (let i = entries.length - 1; i >= 0; i -= 1) {
-            const entry = entries[i];
+        for (const entry of entries) {
             const item = document.createElement('li');
 
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'history-item';
-            button.title = entry.input;
+            button.title = entry.expr;
+            button.style.setProperty('--history-player-color', entry.color);
             button.addEventListener('click', () => {
-                restore(entry.input);
+                restore(entry.expr);
                 setOpen(false);
             });
 
+            const meta = document.createElement('span');
+            meta.className = 'history-item-meta';
+
+            const dot = document.createElement('span');
+            dot.className = 'history-player-dot';
+            dot.setAttribute('aria-hidden', 'true');
+
+            const name = document.createElement('span');
+            name.className = 'history-player-name';
+            name.textContent = entry.name;
+
+            const outcome = document.createElement('span');
+            outcome.className = 'history-item-outcome';
+            outcome.textContent = outcomeLabel(entry);
+
+            meta.append(dot, name, outcome);
+
             const tex = document.createElement('span');
             tex.className = 'history-item-tex';
-            if (entry.ok && entry.tex && window.katex) {
-                try {
-                    window.katex.render(entry.tex, tex, {
-                        displayMode: false,
-                        strict: 'ignore',
-                        throwOnError: false,
-                    });
-                } catch (error) {
-                    tex.textContent = entry.input;
-                }
-            } else {
-                tex.textContent = entry.input;
-            }
+            renderExpression(entry, tex);
 
-            button.appendChild(tex);
+            button.append(meta, tex);
             item.appendChild(button);
             list.appendChild(item);
         }
 
-        // Pin to the newest entry at the bottom.
         list.scrollTop = list.scrollHeight;
+    }
+
+    function outcomeLabel(entry) {
+        if (entry.outcome === 'hit' && entry.hitSeat != null) {
+            return `hit P${entry.hitSeat + 1}`;
+        }
+        if (entry.outcome === 'blocked') {
+            return 'blocked';
+        }
+        if (entry.outcome === 'out') {
+            return 'out';
+        }
+        return `shot ${entry.seq}`;
+    }
+
+    function renderExpression(entry, target) {
+        const tex = entry.ok && entry.tex ? entry.tex : '';
+        if (tex && window.katex) {
+            try {
+                window.katex.render(tex, target, {
+                    displayMode: false,
+                    strict: 'ignore',
+                    throwOnError: false,
+                });
+                return;
+            } catch (error) {
+                // Fall through to raw input if KaTeX cannot render this expression.
+            }
+        }
+        target.textContent = entry.expr;
     }
 
     toggle.addEventListener('click', () => {
         setOpen(dock.dataset.open !== 'true');
     });
 
-    clearButton?.addEventListener('click', () => {
-        entries = [];
-        saveEntries();
-        render();
+    document.addEventListener('gradgame:history', (event) => {
+        setEntries(event.detail?.entries || []);
     });
 
-    document.addEventListener('gradgame:commit', (event) => {
-        record(event.detail || {});
-    });
-
-    // Dismiss when clicking outside the dock or pressing Escape.
     document.addEventListener('click', (event) => {
         if (dock.dataset.open === 'true' && !dock.contains(event.target)) {
             setOpen(false);
         }
     });
+
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && dock.dataset.open === 'true') {
             setOpen(false);
