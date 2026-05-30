@@ -141,9 +141,23 @@ export function compile(js) {
                  cot=function(a){return 1/Math.tan(a)};
              return (${js});`,
         );
+        // Evaluate f(0) so we can normalize the curve to pass through the
+        // cannon origin (y = originY + f(s) − f(0)). Without this, constant
+        // terms like "+1" would shift the graph away from the cannon.
+        // If f(0) is not finite (e.g. 1/x, log(x), csc(x)), the trajectory
+        // can't start from the cannon at all — reject the expression.
+        let offset;
+        try {
+            const v0 = fn(0, 0);
+            if (typeof v0 !== 'number' || !Number.isFinite(v0)) return null;
+            offset = v0;
+        } catch {
+            return null;
+        }
+
         return (s) => {
             const v = fn(s, 0);
-            return typeof v === 'number' ? v : NaN;
+            return typeof v === 'number' ? v - offset : NaN;
         };
     } catch {
         return null;
