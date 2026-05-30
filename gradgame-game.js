@@ -61,6 +61,7 @@ export function start({ db, uid }) {
     let serverOffset = 0;
     let seenSeq = 0;
     let lastRoundKey = '';
+    let emptyResetPending = false;
     const shotQueue = [];
     let activeShot = null;      // { by, path, outcome, impact, t0, dur, doneAt }
     const persistentArcs = [];  // resolved arcs kept (faint) for the round
@@ -105,13 +106,25 @@ export function start({ db, uid }) {
        ════════════════════════════════════════════════════════════════════ */
     function onState(snap) {
         const v = snap.val() || {};
-        const meta = v.meta || { status: 'lobby', turnIndex: 0, round: 0, turnSeconds: TURN_SECONDS };
+        let meta = v.meta || emptyLobbyMeta();
         const playersRaw = v.players || {};
         const players = [0, 1, 2, 3].map((i) => playersRaw[i] || null);
-        const obstacles = Array.isArray(v.obstacles)
+        let obstacles = Array.isArray(v.obstacles)
             ? v.obstacles
             : (v.obstacles ? Object.values(v.obstacles) : []);
-        state = { meta, players, obstacles, shot: v.shot || null };
+        let shot = v.shot || null;
+
+        if (!players.some(Boolean)) {
+            if (needsEmptyGameReset(meta, obstacles, shot)) resetEmptyGame();
+            meta = emptyLobbyMeta();
+            obstacles = [];
+            shot = null;
+            clearRoundEffects();
+        } else if (!shot) {
+            seenSeq = 0;
+        }
+
+        state = { meta, players, obstacles, shot };
 
         mySeat = players.findIndex((p) => p && (p.uid === uid || p.token === token));
 
@@ -124,7 +137,6 @@ export function start({ db, uid }) {
         }
 
         // New shot to animate (every client watches the latest shot).
-        const shot = state.shot;
         if (shot && shot.seq && shot.seq !== seenSeq) {
             seenSeq = shot.seq;
             shotQueue.push(shot);
@@ -171,7 +183,16 @@ export function start({ db, uid }) {
     async function leaveSeat(seat) {
         try {
             await onDisconnect(gRef(`players/${seat}`)).cancel();
-            await remove(gRef(`players/${seat}`));
+            const leavingLastSeat = state && !state.players.some((p, i) => i !== seat && p);
+            if (leavingLastSeat) {
+                await update(gRef(), {
+                    [`players/${seat}`]: null,
+                    ...emptyLobbyUpdates(),
+                });
+                clearRoundEffects();
+            } else {
+                await remove(gRef(`players/${seat}`));
+            }
             mySeat = -1;
         } catch (err) {
             console.error('leave failed', err);
@@ -338,6 +359,57 @@ export function start({ db, uid }) {
             turnSeconds: state.meta.turnSeconds || TURN_SECONDS,
             turnStartedAt: serverTimestamp(),
         });
+    }
+
+    function emptyLobbyMeta() {
+        return {
+            status: 'lobby',
+            round: 0,
+            turnIndex: 0,
+            winner: null,
+            turnSeconds: TURN_SECONDS,
+        };
+    }
+
+    function emptyLobbyUpdates() {
+        return {
+            meta: emptyLobbyMeta(),
+            obstacles: null,
+            shot: null,
+        };
+    }
+
+    function needsEmptyGameReset(meta, obstacles, shot) {
+        return Boolean(
+            shot
+            || obstacles.length
+            || meta.status !== 'lobby'
+            || (meta.round || 0) !== 0
+            || (meta.turnIndex || 0) !== 0
+            || meta.winner != null
+            || meta.turnStartedAt != null
+            || (meta.turnSeconds || TURN_SECONDS) !== TURN_SECONDS
+        );
+    }
+
+    function resetEmptyGame() {
+        if (emptyResetPending) return;
+        emptyResetPending = true;
+        update(gRef(), emptyLobbyUpdates())
+            .catch((err) => {
+                console.error('[GraphWar] empty lobby reset failed', err);
+            })
+            .finally(() => {
+                emptyResetPending = false;
+            });
+    }
+
+    function clearRoundEffects() {
+        seenSeq = 0;
+        shotQueue.length = 0;
+        activeShot = null;
+        persistentArcs.length = 0;
+        aimPoints = null;
     }
 
     /* ════════════════════════════════════════════════════════════════════
