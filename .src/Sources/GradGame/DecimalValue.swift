@@ -45,6 +45,28 @@ struct DecimalValue {
         DecimalValue(digits: digits, exponent: exponent, negative: false, scientific: scientific)
     }
 
+    /// The exact `Int` value when this is an integer of at most 9 significant
+    /// places, else nil. The 9-place bound keeps every accumulation step below
+    /// Int32.max so the multiply-by-ten never overflows on wasm32 (where `Int` is
+    /// 32-bit). Used for rational gcd reduction, which only needs small integers.
+    var smallInteger: Int? {
+        if isZero { return 0 }
+        if exponent < digits.count - 1 { return nil } // has a fractional part
+        if exponent + 1 > 9 { return nil }            // would exceed 9 digits
+        var accumulator = 0
+        var index = 0
+        while index < digits.count {
+            accumulator = accumulator * 10 + Int(digits[index])
+            index += 1
+        }
+        var trailingZeros = exponent - (digits.count - 1)
+        while trailingZeros > 0 {
+            accumulator = accumulator * 10
+            trailingZeros -= 1
+        }
+        return negative ? -accumulator : accumulator
+    }
+
     // MARK: Parsing
 
     /// Parses a lexer `.number` payload (digits, optional `.`, optional uppercase

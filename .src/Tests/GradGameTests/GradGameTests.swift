@@ -31,8 +31,12 @@ import Testing
         ("sinh x + cosh y + tanh x", "\\sinh x + \\cosh y + \\tanh x"),
         ("exp(x + y)", "\\exp(x + y)"),
         ("pow(x + y, 2)", "\\left(x + y\\right)^{2}"),
-        ("dx(x^2 + y)", "\\frac{\\partial}{\\partial x}\\left(x^{2} + y\\right)"),
-        ("dy x", "\\frac{\\partial}{\\partial y}\\left(x\\right)"),
+        // A radical braces its argument; log renders like the trig functions.
+        ("sqrt(x)", "\\sqrt{x}"),
+        ("sqrt x", "\\sqrt{x}"),
+        ("sqrt(x + y)", "\\sqrt{x + y}"),
+        ("log(x)", "\\log(x)"),
+        ("log x", "\\log x"),
     ]
 
     for (input, expected) in cases {
@@ -76,9 +80,9 @@ import Testing
         ("x - 2 x", "-x"),
         ("x y + y x", "2 x y"),
         ("x x + x x", "2 x^{2}"),
-        ("x ^ 2 + x + x ^ 2", "2 x^{2} + x"),
+        ("x ^ 2 + x + x ^ 2", "x \\left(2 x + 1\\right)"),
         ("2 x + 3 x + 1", "5 x + 1"),
-        ("x ^ 2 + x", "x^{2} + x"),
+        ("x ^ 2 + x", "x \\left(x + 1\\right)"),
         // Canonical ordering places algebraic factors before functions.
         ("sin x y + x ^ 2 + 3", "y \\sin x + x^{2} + 3"),
     ]
@@ -107,6 +111,12 @@ import Testing
         ("tan^2 x", "Math.pow(Math.tan(x), 2)"),
         ("pow(x + y, 2)", "Math.pow(x + y, 2)"),
         ("sec x + csc y + cot x", "(1 / Math.cos(x)) + (1 / Math.sin(y)) + (1 / Math.tan(x))"),
+        ("sqrt(x)", "Math.sqrt(x)"),
+        ("log(x)", "Math.log(x)"),
+        // A multiplicative denominator is parenthesized so JS does not read
+        // `1 / (2 x)` as the left-associative `(1 / 2) * x`.
+        ("1 / (2 x)", "1 / (2 * x)"),
+        ("1 / (x y)", "1 / (x * y)"),
     ]
 
     for (input, expected) in cases {
@@ -114,26 +124,51 @@ import Testing
     }
 }
 
-@Test func parserRendersDerivativeAsEvaluableJavaScript() throws {
-    let rendered = try parseExpressionToJavaScript("dx(x^2 + y)")
+@Test func parserDifferentiatesSymbolically() throws {
+    // Each `dx`/`dy` node is replaced by the actual derivative (then simplified),
+    // so the output is plain algebra rather than `\partial` notation.
+    let cases = [
+        ("dx(x^2 + y)", "2 x"),                          // power + sum (y is held constant)
+        ("dy x", "0"),                                   // x is constant w.r.t. y
+        ("dx x", "1"),
+        ("dx(x^3)", "3 x^{2}"),
+        ("dx(x^2)", "2 x"),
+        ("dx(sin x)", "\\cos x"),
+        ("dx(cos x)", "-\\sin x"),
+        ("dx(e^x)", "e^{x}"),
+        ("dx(x y)", "y"),                                // partial: ∂/∂x (x y) = y
+        ("dy(x y)", "x"),
+        ("dx(x^y)", "y x^{y - 1}"),                      // y is a constant exponent
+        ("dx(sin(x^2))", "2 x \\cos(x^{2})"),            // chain rule
+        ("dx(dx(x^3))", "6 x"),                          // higher-order
+        ("dx(log x)", "\\frac{1}{x}"),                   // d/dx ln(x) = 1/x
+        ("dx(sqrt x)", "\\frac{1}{2 \\sqrt{x}}"),        // d/dx √x = 1/(2√x)
+    ]
 
-    #expect(rendered.contains("=>"))
-    #expect(rendered.contains("Math.pow((x + __gradGameH0), 2) + y"))
-    #expect(rendered.contains("Math.pow((x - __gradGameH0), 2) + y"))
-    #expect(rendered.contains("/ (2 * __gradGameH0)"))
+    for (input, expected) in cases {
+        #expect(try parseExpressionToTeX(input, simplify: true) == expected)
+    }
 }
 
-@Test func rendersLargeAndScientificNumbers() throws {
-    // Numbers beyond Int32.max render in scientific notation (no overflow/crash);
-    // typed E-notation renders the same way. Rendering is independent of simplify.
+@Test func parserRendersDifferentiatedJavaScript() throws {
+    // A resolvable derivative becomes ordinary evaluable JS (no central difference).
+    #expect(try parseExpressionToJavaScript("dx(x^2 + y)") == "2 * x")
+
+    // A derivative that would need a logarithm (`2^x`) stays symbolic, so the JS
+    // renderer falls back to a numeric central difference that still evaluates.
+    let fallback = try parseExpressionToJavaScript("dx(2^x)")
+    #expect(fallback.contains("=>"))
+    #expect(fallback.contains("/ (2 * __gradGameH0)"))
+}
+
+@Test func rendersLargeNumbers() throws {
+    // Numbers beyond Int32.max render in scientific notation (no overflow/crash).
+    // Rendering is independent of simplify.
     let cases = [
         ("9999999999", "9.999999999 \\times 10^{9}"),
         ("3000000000", "3 \\times 10^{9}"),
         ("2147483647", "2147483647"),           // Int32.max: verbatim
         ("2147483648", "2.147483648 \\times 10^{9}"),
-        ("3E6", "3 \\times 10^{6}"),
-        ("1.5E-3", "1.5 \\times 10^{-3}"),
-        ("3E0", "3"),
         ("12 + 3", "12 + 3"),                    // small numbers untouched
     ]
 
@@ -146,8 +181,17 @@ import Testing
     #expect(try parseExpressionToTeX("100000 * 100000", simplify: true) == "1 \\times 10^{10}")
     // A lone large literal times 1 folds the 1 away and renders scientifically.
     #expect(try parseExpressionToTeX("3333333333 * 1", simplify: true) == "3.333333333 \\times 10^{9}")
-    // E-notation survives simplification rather than being folded to a plain integer.
-    #expect(try parseExpressionToTeX("3E6", simplify: true) == "3 \\times 10^{6}")
+}
+
+@Test func parserRejectsScientificNotationInput() {
+    // E-notation is no longer accepted; write the power of ten explicitly (`2 10^3`).
+    expectParseFailure("2E3")
+    expectParseFailure("1.5E-3")
+    expectParseFailure("E")
+    // The intended replacement parses and renders as a product.
+    #expect(throws: Never.self) {
+        _ = try parseExpressionToTeX("2 10^3")
+    }
 }
 
 @Test func simplifierFoldsLargeNumbersScientifically() throws {
@@ -176,7 +220,7 @@ import Testing
     // fold by repeated multiplication — all subject to the same scientific model.
     let cases = [
         ("3000000000 + 3000000000", "6 \\times 10^{9}"),
-        ("2E30 + 3E30", "5 \\times 10^{30}"),
+        ("2 10^30 + 3 10^30", "5 \\times 10^{30}"),
         ("10 ^ 20", "1 \\times 10^{20}"),
         ("2 ^ 10", "1024"),          // small power stays a plain integer
         ("2 ^ 3", "8"),
@@ -197,8 +241,9 @@ import Testing
     #expect(try parseExpressionToTeX("(x+1)^2 (1+x)", simplify: true) == cube)
     #expect(try parseExpressionToTeX("(1+x)(x+1)^2", simplify: true) == cube)
     #expect(try parseExpressionToTeX("(x+1)(x+1)(x+1)", simplify: true) == cube)
-    // The additive form is preserved (correctly not collapsed into the cube).
-    #expect(try parseExpressionToTeX("(x+1)^2 + 1+x", simplify: true) == "\\left(x + 1\\right)^{2} + x + 1")
+    // The additive form is *not* the cube (x^2+3x+2, not x^3+3x+1); it factors by
+    // the shared (x+1) into (x+1)(x+2), since the leftover 1 + x is itself (x+1).
+    #expect(try parseExpressionToTeX("(x+1)^2 + 1+x", simplify: true) == "\\left(x + 1\\right) \\left(x + 2\\right)")
 }
 
 @Test func simplifierCollectsLikeTermsOverCompoundBases() throws {
@@ -210,15 +255,71 @@ import Testing
     #expect(try parseExpressionToTeX("3(x+1)^2 - (x+1)^2", simplify: true) == "2 " + square)
 }
 
+@Test func simplifierFoldsRationalCoefficients() throws {
+    // A numeric denominator becomes a reduced rational coefficient pulled to the
+    // front (coefficient-first, never \frac{2 x}{3}); fractions multiply and add
+    // exactly rather than turning into a rounded decimal.
+    let cases = [
+        ("x (2)/(3)", "\\frac{2}{3} x"),
+        ("2 x / 3", "\\frac{2}{3} x"),
+        ("4 x / 2", "2 x"),                       // reduces to an integer coefficient
+        ("6 x / 4", "\\frac{3}{2} x"),
+        ("x / 4", "\\frac{1}{4} x"),
+        ("-2 x / 3", "\\frac{-2}{3} x"),          // the sign rides in the numerator
+        ("2/3", "\\frac{2}{3}"),
+        ("6/4", "\\frac{3}{2}"),
+        ("(2)/(3) * (4)/(5)", "\\frac{8}{15}"),   // 2/3 · 4/5
+        ("x/2 + x/3", "\\frac{5}{6} x"),          // like terms add as fractions
+        ("(2/3)^2", "\\frac{4}{9}"),
+        ("2^-1", "\\frac{1}{2}"),
+        ("(x)/(y)", "\\frac{x}{y}"),              // a symbolic denominator stays a fraction
+        ("10 / 2", "5"),                          // exact integer division still folds
+    ]
+
+    for (input, expected) in cases {
+        #expect(try parseExpressionToTeX(input, simplify: true) == expected)
+    }
+}
+
+@Test func simplifierFactorsCommonTerms() throws {
+    // Common-factor-only factoring: a numeric and/or symbolic factor shared by
+    // every term is pulled out of the sum.
+    let monomial = [
+        ("2 x + 2 y", "2 \\left(x + y\\right)"),
+        ("x ^ 2 + x", "x \\left(x + 1\\right)"),
+        ("4 x ^ 2 + 6 x", "2 x \\left(2 x + 3\\right)"),
+        ("2 x + 4", "2 \\left(x + 2\\right)"),
+        ("3 x + 6 y + 9", "3 \\left(x + 2 y + 3\\right)"),
+    ]
+    // A compound base (a sum like x+1) is pulled out even when it is not literally a
+    // factor of every term, provided the leftover terms sum to a multiple of it.
+    let compound = [
+        ("(x+1)^2 + 1 + x", "\\left(x + 1\\right) \\left(x + 2\\right)"),
+        ("(x+1)^2 + 2 + 2 x", "\\left(x + 1\\right) \\left(x + 3\\right)"),
+        ("x (x+1) + (x+1)", "\\left(x + 1\\right)^{2}"),
+        ("(x+y)^2 + x + y", "\\left(x + y\\right) \\left(x + y + 1\\right)"),
+    ]
+    // No shared factor: left expanded (this is not quadratic/general factoring).
+    let unfactored = [
+        ("x ^ 2 + 2 x + 1", "x^{2} + 2 x + 1"),
+        ("5 x + 1", "5 x + 1"),
+        ("x ^ 2 - 1", "x^{2} - 1"),
+    ]
+
+    for (input, expected) in monomial + compound + unfactored {
+        #expect(try parseExpressionToTeX(input, simplify: true) == expected)
+    }
+}
+
 @Test func simplifierRejectsNumbersTooLargeForFloat32() throws {
     // With simplify on, any value whose exponent exceeds 38 is rejected cleanly
     // (a thrown error, never a trap), so the page never folds an unrepresentable
     // number — whether folded from an operation or typed as a lone literal.
     let tooLarge = [
-        "10 ^ 40",        // power
-        "1E20 * 1E20",    // product -> 1e40
-        "5E38 + 5E38",    // sum -> 1e39
-        "3E40",           // lone literal
+        "10 ^ 40",              // power
+        "1 10^20 * 1 10^20",    // product -> 1e40
+        "5 10^38 + 5 10^38",    // sum -> 1e39
+        "3 10^40",              // a lone power of ten beyond the cap
     ]
     for input in tooLarge {
         #expect(throws: ExpressionParserError.numberTooLarge) {
@@ -226,8 +327,43 @@ import Testing
         }
     }
 
-    // The cap is simplify-only: without simplification the literal still renders.
-    #expect(try parseExpressionToTeX("3E40") == "3 \\times 10^{40}")
+    // The cap is simplify-only: without simplification the expression still renders.
+    #expect(try parseExpressionToTeX("3 10^40") == "3 10^{40}")
+}
+
+@Test func simplifierUnderflowsTinyValuesToZero() throws {
+    // A folded magnitude below 10^-39 (under float32's smallest normalized positive,
+    // ~1.18e-38) collapses to exact zero rather than being kept or rejected.
+    let cases = [
+        ("10 ^ -40", "0"),
+        ("10 ^ -50", "0"),
+        ("1 / 10^20 * 1 / 10^20", "0"),  // 1e-40
+        ("10^-50 x", "0"),               // a tiny coefficient zeroes the whole term
+        ("1 + 10^-40", "1"),             // a tiny addend vanishes
+    ]
+    for (input, expected) in cases {
+        #expect(try parseExpressionToTeX(input, simplify: true) == expected)
+    }
+
+    // 10^-39 itself is the boundary ("less than 10^-39"), so it is kept, not zeroed.
+    #expect(try parseExpressionToTeX("10 ^ -39", simplify: true) == "\\frac{1}{1 \\times 10^{39}}")
+}
+
+@Test func simplifierHandlesDivisionByZero() throws {
+    // A non-zero numerator over a literal zero is signed infinity (an internal
+    // `\infty` constant the parser never emits); 0 / 0 is the indeterminate form.
+    #expect(try parseExpressionToTeX("1 / 0", simplify: true) == "\\infty")
+    #expect(try parseExpressionToTeX("-1 / 0", simplify: true) == "-\\infty")
+    #expect(try parseExpressionToTeX("5 / (x - x)", simplify: true) == "\\infty")  // denominator folds to 0
+    #expect(try parseExpressionToTeX("x / 0", simplify: true) == "\\infty")
+
+    #expect(throws: ExpressionParserError.notANumber) {
+        try parseExpressionToTeX("0 / 0", simplify: true)
+    }
+
+    // The JS form is a literal translation (not simplified); `1 / 0` evaluates to
+    // Infinity and `0 / 0` to NaN at runtime, so both stay as written here.
+    #expect(try parseExpressionToJavaScript("1 / 0") == "1 / 0")
 }
 
 @Test func parserRejectsOverlyComplexInput() throws {
@@ -253,7 +389,7 @@ import Testing
 @Test func parserReportsInvalidInput() {
     expectParseFailure("")
     expectParseFailure("z + 1")
-    expectParseFailure("log(x)")
+    expectParseFailure("floor(x)")
     expectParseFailure("(x + y")
     expectParseFailure("x +")
     expectParseFailure("pow(x)")

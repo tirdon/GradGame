@@ -17,8 +17,10 @@ acos(_:)
 atan(_:)
 ```
 ```
-pow(_:,_:)
+sqrt(_:)
+pow(_:_:)
 exp(_:)
+log(_:)
 ```
 Partial derivatives
 ```

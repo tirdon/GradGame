@@ -6,3 +6,5 @@ e ^ x y + 7 = ye^{x} + 7
 (x)/(y) = \frac{x}{y}
 tan^2 x y = y\tan^{2} x
 tan^2 (x y) = \tan^{2}(xy)
+sqrt(x ^ 2 + 1) = \sqrt{x^2 + 1}
+dx log x = \frac{1}{x}

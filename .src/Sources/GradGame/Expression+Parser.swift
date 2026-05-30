@@ -1,5 +1,5 @@
 public func parseExpressionToTeX(_ input: String, simplify: Bool = false) throws -> String {
-    var expression = try parseExpression(input)
+    var expression = try Differentiator().resolve(parseExpression(input))
     if simplify {
         expression = try Simplifier().simplify(expression)
     }
@@ -7,7 +7,7 @@ public func parseExpressionToTeX(_ input: String, simplify: Bool = false) throws
 }
 
 public func parseExpressionToJavaScript(_ input: String) throws -> String {
-    try JavaScriptRenderer().render(parseExpression(input))
+    try JavaScriptRenderer().render(Differentiator().resolve(parseExpression(input)))
 }
 
 private func parseExpression(_ input: String) throws -> Expression {
@@ -182,6 +182,8 @@ private final class ExpressionParser {
             || name == "cosh"
             || name == "tanh"
             || name == "exp"
+            || name == "log"
+            || name == "sqrt"
     }
 
     private func parsePowFunction() throws -> Expression {

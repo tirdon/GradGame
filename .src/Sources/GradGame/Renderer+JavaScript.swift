@@ -2,7 +2,7 @@ final class JavaScriptRenderer {
     private var derivativeIndex = 0
 
     func render(_ expression: Expression) -> String {
-        render(expression, parentPrecedence: 0, position: .none, variableOverrides: [:])
+        render(expression, parentPrecedence: 0, position: .none)
     }
 
     private enum Position {
@@ -11,12 +11,7 @@ final class JavaScriptRenderer {
         case right
     }
 
-    private func render(
-        _ expression: Expression,
-        parentPrecedence: Int,
-        position: Position,
-        variableOverrides: [String: String]
-    ) -> String {
+    private func render(_ expression: Expression, parentPrecedence: Int, position: Position) -> String {
         let rendered: String
         let precedence = self.precedence(of: expression)
 
@@ -24,16 +19,11 @@ final class JavaScriptRenderer {
         case let .number(value):
             rendered = value
         case let .variable(name):
-            rendered = variableOverrides[name] ?? name
+            rendered = name
         case let .constant(name):
             rendered = renderConstant(name)
         case let .unary(operation, operand):
-            let operandJavaScript = render(
-                operand,
-                parentPrecedence: precedence,
-                position: .right,
-                variableOverrides: variableOverrides
-            )
+            let operandJavaScript = render(operand, parentPrecedence: precedence, position: .right)
             switch operation {
             case .plus:
                 rendered = "+\(operandJavaScript)"
@@ -41,16 +31,16 @@ final class JavaScriptRenderer {
                 rendered = "-\(operandJavaScript)"
             }
         case let .binary(operation, lhs, rhs):
-            rendered = renderBinary(operation, lhs, rhs, variableOverrides: variableOverrides)
+            rendered = renderBinary(operation, lhs, rhs)
         case let .function(name, argument, exponent, _):
-            let functionCall = renderFunction(name: name, argument: argument, variableOverrides: variableOverrides)
+            let functionCall = renderFunction(name: name, argument: argument)
             if let exponent {
-                rendered = "Math.pow(\(functionCall), \(render(exponent, parentPrecedence: 0, position: .none, variableOverrides: variableOverrides)))"
+                rendered = "Math.pow(\(functionCall), \(render(exponent, parentPrecedence: 0, position: .none)))"
             } else {
                 rendered = functionCall
             }
         case let .derivative(variable, argument, _):
-            rendered = renderDerivative(variable: variable, argument: argument, variableOverrides: variableOverrides)
+            rendered = renderDerivative(variable: variable, argument: argument)
         }
 
         if shouldWrap(expression, precedence: precedence, parentPrecedence: parentPrecedence, position: position) {
@@ -60,25 +50,25 @@ final class JavaScriptRenderer {
         return rendered
     }
 
-    private func renderBinary(
-        _ operation: BinaryOperator,
-        _ lhs: Expression,
-        _ rhs: Expression,
-        variableOverrides: [String: String]
-    ) -> String {
+    private func renderBinary(_ operation: BinaryOperator, _ lhs: Expression, _ rhs: Expression) -> String {
         let precedence = precedence(ofBinary: operation)
 
         switch operation {
         case .add:
-            return "\(render(lhs, parentPrecedence: precedence, position: .left, variableOverrides: variableOverrides)) + \(render(rhs, parentPrecedence: precedence, position: .right, variableOverrides: variableOverrides))"
+            return "\(render(lhs, parentPrecedence: precedence, position: .left)) + \(render(rhs, parentPrecedence: precedence, position: .right))"
         case .subtract:
-            return "\(render(lhs, parentPrecedence: precedence, position: .left, variableOverrides: variableOverrides)) - \(render(rhs, parentPrecedence: precedence, position: .right, variableOverrides: variableOverrides))"
+            return "\(render(lhs, parentPrecedence: precedence, position: .left)) - \(render(rhs, parentPrecedence: precedence, position: .right))"
         case .multiply, .implicitMultiply:
-            return "\(render(lhs, parentPrecedence: precedence, position: .left, variableOverrides: variableOverrides)) * \(render(rhs, parentPrecedence: precedence, position: .right, variableOverrides: variableOverrides))"
+            return "\(render(lhs, parentPrecedence: precedence, position: .left)) * \(render(rhs, parentPrecedence: precedence, position: .right))"
         case .divide:
-            return "\(render(lhs, parentPrecedence: precedence, position: .left, variableOverrides: variableOverrides)) / \(render(rhs, parentPrecedence: precedence, position: .right, variableOverrides: variableOverrides))"
+            // The denominator must bind tighter than `*` and `/`: `1 / (2 x)` is not
+            // `1 / 2 * x` (which JS reads left-to-right as `(1/2) x`). Rendering it one
+            // precedence level up wraps any multiplicative/additive denominator while
+            // leaving an atom or a self-delimiting `Math.pow(...)` bare.
+            let denominator = render(rhs, parentPrecedence: precedence + 1, position: .right)
+            return "\(render(lhs, parentPrecedence: precedence, position: .left)) / \(denominator)"
         case .power:
-            return "Math.pow(\(render(lhs, parentPrecedence: 0, position: .none, variableOverrides: variableOverrides)), \(render(rhs, parentPrecedence: 0, position: .none, variableOverrides: variableOverrides)))"
+            return "Math.pow(\(render(lhs, parentPrecedence: 0, position: .none)), \(render(rhs, parentPrecedence: 0, position: .none)))"
         }
     }
 
@@ -92,20 +82,18 @@ final class JavaScriptRenderer {
             return "((1 + Math.sqrt(5)) / 2)"
         case "gamma":
             return "0.5772156649015329"
+        case "infinity":
+            return "Infinity"
         default:
             return "NaN"
         }
     }
 
-    private func renderFunction(
-        name: String,
-        argument: Expression,
-        variableOverrides: [String: String]
-    ) -> String {
-        let argumentJavaScript = render(argument, parentPrecedence: 0, position: .none, variableOverrides: variableOverrides)
+    private func renderFunction(name: String, argument: Expression) -> String {
+        let argumentJavaScript = render(argument, parentPrecedence: 0, position: .none)
 
         switch name {
-        case "sin", "cos", "tan", "sinh", "cosh", "tanh", "exp":
+        case "sin", "cos", "tan", "sinh", "cosh", "tanh", "exp", "log", "sqrt":
             return "Math.\(name)(\(argumentJavaScript))"
         case "sec":
             return "(1 / Math.cos(\(argumentJavaScript)))"
@@ -118,25 +106,22 @@ final class JavaScriptRenderer {
         }
     }
 
-    private func renderDerivative(
-        variable: String,
-        argument: Expression,
-        variableOverrides: [String: String]
-    ) -> String {
-        let hName = "__gradGameH\(derivativeIndex)"
+    /// Numeric central difference, used only as a fallback for the rare derivative
+    /// the symbolic `Differentiator` leaves unresolved (an exponential that would
+    /// need a logarithm). The argument is evaluated inside an arrow whose `x`/`y`
+    /// parameters shadow the outer variables, so the differentiation variable is
+    /// perturbed by ±h without any `Dictionary`-based substitution (a non-empty
+    /// Swift `Dictionary` traps on this SwiftWasm SDK — see swiftwasm-trapping-patterns).
+    private func renderDerivative(variable: String, argument: Expression) -> String {
+        let step = "__gradGameH\(derivativeIndex)"
         derivativeIndex += 1
 
-        let baseValue = variableOverrides[variable] ?? variable
-        var positiveOverrides = variableOverrides
-        positiveOverrides[variable] = "(\(baseValue) + \(hName))"
+        let body = render(argument, parentPrecedence: 0, position: .none)
+        let evaluator = "((x, y) => (\(body)))"
+        let plus = variable == "x" ? "\(evaluator)(x + \(step), y)" : "\(evaluator)(x, y + \(step))"
+        let minus = variable == "x" ? "\(evaluator)(x - \(step), y)" : "\(evaluator)(x, y - \(step))"
 
-        var negativeOverrides = variableOverrides
-        negativeOverrides[variable] = "(\(baseValue) - \(hName))"
-
-        let positive = render(argument, parentPrecedence: 0, position: .none, variableOverrides: positiveOverrides)
-        let negative = render(argument, parentPrecedence: 0, position: .none, variableOverrides: negativeOverrides)
-
-        return "(((\(hName)) => ((\(positive)) - (\(negative))) / (2 * \(hName)))(0.00001))"
+        return "(((\(step)) => (\(plus) - \(minus)) / (2 * \(step)))(0.00001))"
     }
 
     private func shouldWrap(_ expression: Expression, precedence: Int, parentPrecedence: Int, position: Position) -> Bool {

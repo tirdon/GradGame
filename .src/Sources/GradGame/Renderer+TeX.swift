@@ -249,12 +249,22 @@ struct TeXRenderer {
             return "\\phi"
         case "gamma":
             return "\\gamma"
+        case "infinity":
+            return "\\infty"
         default:
             return name
         }
     }
 
     private func renderFunction(name: String, argument: Expression, exponent: Expression?, parenthesized: Bool) -> String {
+        // A radical wraps its argument in braces (`\sqrt{...}`) rather than the
+        // bare/parenthesized form the trig-style functions use.
+        if name == "sqrt" {
+            let radical = "\\sqrt{\(render(argument, parentPrecedence: 0, position: .none))}"
+            guard let exponent else { return radical }
+            return "\(radical)^{\(render(exponent, parentPrecedence: 0, position: .none))}"
+        }
+
         let macro = name == "exp" ? "\\exp" : "\\\(name)"
         let exponentTeX = exponent.map { "^{\(render($0, parentPrecedence: 0, position: .none))}" } ?? ""
         let argumentTeX = render(argument, parentPrecedence: 0, position: .none)

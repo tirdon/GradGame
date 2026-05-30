@@ -106,8 +106,8 @@ struct ExpressionLexer {
                         throw ExpressionParserError.unexpectedCharacter(".", start)
                     }
 
-                    index = consumeScientificExponent(from: index)
-
+                    // No E-notation: `2E3` lexes as `2`, identifier `E`, `3`, which the
+                    // parser rejects. Write a power of ten explicitly instead (`2 10^3`).
                     tokens.append(.number(String(decoding: bytes[start..<index], as: UTF8.self)))
                 } else if isLetter(byte) {
                     let start = index
@@ -123,25 +123,6 @@ struct ExpressionLexer {
 
         tokens.append(.end)
         return tokens
-    }
-
-    /// Consumes an uppercase `E` exponent suffix (optionally signed) when one
-    /// directly follows the mantissa, so `3E6` lexes as one scientific number.
-    /// A lowercase `e` is deliberately left alone — it is Euler's constant.
-    private func consumeScientificExponent(from index: Int) -> Int {
-        guard index < bytes.count, bytes[index] == 69 else { return index } // 'E'
-
-        var lookahead = index + 1
-        if lookahead < bytes.count, bytes[lookahead] == 43 || bytes[lookahead] == 45 { // '+' '-'
-            lookahead += 1
-        }
-        guard lookahead < bytes.count, isDigit(bytes[lookahead]) else { return index }
-
-        var end = lookahead
-        while end < bytes.count, isDigit(bytes[end]) {
-            end += 1
-        }
-        return end
     }
 
     private func isWhitespace(_ byte: UInt8) -> Bool {

@@ -214,6 +214,28 @@
         }, 120);
     }
 
+    function logJavaScriptParse() {
+        if (!wasmExports || !expressionInput) {
+            return;
+        }
+
+        const input = expressionInput.value.trim();
+        if (!input) {
+            console.log('');
+            return;
+        }
+
+        try {
+            const js = parseToJavaScript(input);
+            console.log(js.text);
+        } catch (error) {
+            console.error(error);
+            if (error instanceof WasmTrapError) {
+                recoverWasm();
+            }
+        }
+    }
+
     async function instantiate() {
         const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1 };
         const instance = await WebAssembly.instantiate(wasmModule, imports);
@@ -296,6 +318,11 @@
         }
 
         expressionInput?.addEventListener('input', scheduleRender);
+        expressionInput?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                logJavaScriptParse();
+            }
+        });
         evalX?.addEventListener('input', scheduleRender);
         evalY?.addEventListener('input', scheduleRender);
         renderExpression();
