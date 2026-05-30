@@ -10,6 +10,13 @@ public func parseExpressionToJavaScript(_ input: String) throws -> String {
     try JavaScriptRenderer().render(Differentiator().resolve(parseExpression(input)))
 }
 
+/// Parse `input` and resolve every `dx`/`dy` node to its symbolic derivative,
+/// yielding an AST ready for `evaluate(x:y:)`. Shared by the Graph War engine
+/// exports so the trajectory sweep evaluates the same tree the renderers would.
+func parseAndResolveExpression(_ input: String) throws -> Expression {
+    try Differentiator().resolve(parseExpression(input))
+}
+
 private func parseExpression(_ input: String) throws -> Expression {
     let tokens = try ExpressionLexer(input).tokens()
     return try ExpressionParser(tokens: tokens).parse()

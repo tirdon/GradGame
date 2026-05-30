@@ -136,24 +136,36 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
         import { getDatabase } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js";
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyBwl5fs3MEQh5_AIWVsc9rzfOUH70ypncw",
-            authDomain: "webdata-26edf.firebaseapp.com",
-            databaseURL: "https://webdata-26edf-default-rtdb.asia-southeast1.firebasedatabase.app",
-            projectId: "webdata-26edf",
-            storageBucket: "webdata-26edf.firebasestorage.app",
-            messagingSenderId: "411882405034",
-            appId: "1:411882405034:web:5e98982af98fb49ca024d3"
+        // The page is a battlefield — drop the grapher chrome immediately (graph.js
+        // defines Battlefield synchronously).
+        if (window.Battlefield) window.Battlefield.enterGameMode();
+
+        const setStatus = (text) => {
+            const s = document.getElementById("game-status");
+            if (s) s.textContent = text;
         };
+
+        // The engine AND the firebaseConfig now live inside GradGame.wasm (kept out of
+        // this page's source). Wait for the module, read the config from the binary,
+        // then bring up Firebase. Without the wasm there is no game, so we gate on it.
+        try {
+            await (window.gradGameReady || Promise.reject(new Error("wasm bootstrap missing")));
+        } catch (e) {
+            console.error("GradGame.wasm failed to load — game unavailable", e);
+            setStatus("Engine failed to load — reload the page.");
+            throw e;
+        }
+
+        const firebaseConfig = window.gradGameConfig();
+        if (!firebaseConfig) {
+            setStatus("Engine config missing — reload the page.");
+            throw new Error("firebaseConfig unavailable from wasm");
+        }
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getDatabase(app);
         window.GG = { app, auth, db, uid: null };
-
-        // The page is a battlefield — drop the grapher chrome immediately, even if
-        // Firebase sign-in never resolves (graph.js defines Battlefield synchronously).
-        if (window.Battlefield) window.Battlefield.enterGameMode();
 
         // Once anonymous sign-in resolves, hand the DB + uid to the game controller.
         let launched = false;
@@ -167,8 +179,7 @@
         });
         signInAnonymously(auth).catch((e) => {
             console.error("anonymous sign-in failed (enable Anonymous auth in Firebase console)", e);
-            const s = document.getElementById("game-status");
-            if (s) s.textContent = "Sign-in failed — enable Anonymous auth in Firebase.";
+            setStatus("Sign-in failed — enable Anonymous auth in Firebase.");
         });
         </script>
     </body>

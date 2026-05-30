@@ -12,7 +12,8 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "GradGame"
+            name: "GradGame",
+            swiftSettings: [.enableExperimentalFeature("Extern")]
         ),
         .testTarget(
             name: "GradGameTests",

@@ -1,9 +1,9 @@
 /**
  * gradgame-game.js — 4-player Graph War controller (browser glue).
  * ──────────────────────────────────────────────────────────────────────────
- * Imports the pure engine (gradgame-engine.js), syncs the shared match over
- * Firebase Realtime Database, and feeds the WGSL battlefield renderer
- * (window.Battlefield, from gradgame-graph.js) a fresh scene each frame.
+ * Calls the wasm engine (window.gradGameEngine, from gradgame-wasm.js), syncs the
+ * shared match over Firebase Realtime Database, and feeds the WGSL battlefield
+ * renderer (window.Battlefield, from gradgame-graph.js) a fresh scene each frame.
  *
  * `start({ db, auth, uid })` is called by the Firebase bootstrap in index.html
  * once anonymous sign-in resolves.
@@ -12,7 +12,7 @@
  *   meta:    { status, round, turnIndex, winner, turnSeconds, turnStartedAt }
  *   players/{0..3}: { uid, name, token, x, y, alive, ready, score, color, joinedAt }
  *   obstacles: [ { x, y, r }, … ]
- *   shot:    { seq, by, expr, js, path, outcome, impact, ts }   // latest shot only
+ *   shot:    { seq, by, expr, dir, outcome, impact, ts }   // latest shot only; clients rebuild the path
  *   history/{seq}: { seq, round, by, name, color, expr, tex, outcome, hitSeat, ts }
  *
  * Authority: client-side. The shooter computes its own outcome and writes the
@@ -24,11 +24,20 @@ import {
     ref, onValue, set, update, remove,
     runTransaction, onDisconnect, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js';
-import {
-    WORLD, CANNON_RADIUS, TURN_SECONDS, PLAYER_COLORS, PLAYER_COLOR_HEX,
-    compile, simulateShot, resampleArc, aimDirection, nextAliveSeat,
-    placePlayers, generateObstacles,
-} from './gradgame-engine.js';
+
+// The Graph War engine (expression evaluator, trajectory sim, placement, turn
+// logic) now lives entirely in GradGame.wasm, reached through window.gradGameEngine
+// (set up by gradgame-wasm.js). Only these UI/battlefield constants stay in JS.
+const WORLD = { xMin: -12, xMax: 12, yMin: -6.75, yMax: 6.75 };
+const CANNON_RADIUS = 0.55;
+const TURN_SECONDS = 30;
+const PLAYER_COLORS = [
+    [0.13, 0.83, 0.93, 1.0], // 0 cyan   #22d3ee
+    [0.98, 0.45, 0.52, 1.0], // 1 rose   #fb7185
+    [0.98, 0.75, 0.14, 1.0], // 2 amber  #fbbf24
+    [0.65, 0.55, 0.98, 1.0], // 3 violet #a78bfa
+];
+const PLAYER_COLOR_HEX = ['#22d3ee', '#fb7185', '#fbbf24', '#a78bfa'];
 
 const GAME_PATH = 'games/main';
 const KEY_TOKEN = 'gradgame:token';
@@ -40,6 +49,9 @@ let started = false;
 export function start({ db, uid }) {
     if (started) return;
     started = true;
+
+    // The wasm engine API (installed by gradgame-wasm.js before sign-in resolves).
+    const E = window.gradGameEngine;
 
     /* ── Identity ──────────────────────────────────────────────────────── */
     let token = localStorage.getItem(KEY_TOKEN);
@@ -68,9 +80,8 @@ export function start({ db, uid }) {
     const observedHistory = [];
     let activeShot = null;      // { by, path, outcome, impact, t0, dur, doneAt }
     const persistentArcs = [];  // resolved arcs kept (faint) for the round
-    let myCompiled = null;
-    let myJS = '';
     let aimPoints = null;
+    let aimKey = '';            // signature of the cached aim preview (expr|x|y|dir)
 
     const serverNow = () => Date.now() + serverOffset;
     const gRef = (p) => ref(db, p ? `${GAME_PATH}/${p}` : GAME_PATH);
@@ -225,8 +236,8 @@ export function start({ db, uid }) {
         if (occ.length < 2 || mySeat !== occ[0]) return;
         if (!occ.every((i) => state.players[i].ready)) return;
 
-        const positions = placePlayers(occ);
-        const obstacles = generateObstacles(positions);
+        const positions = E.placePlayers(occ);
+        const obstacles = E.generateObstacles(positions);
         const updates = { obstacles, shot: null };
         for (const i of occ) {
             updates[`players/${i}/x`] = positions[i].x;
@@ -270,21 +281,19 @@ export function start({ db, uid }) {
         }
         const me = state.players[mySeat];
         const expr = inputEl.value.trim();
-        const js = readParsedJS();
-        console.log('[GraphWar] fire js=', JSON.stringify(js));
-        const f = compile(js);
-        if (!f) { toast('Type a valid function first'); console.log('[GraphWar] compile failed for js'); return; }
-
         const cannons = cannonArray();
-        const dir = aimDirection({ x: me.x, y: me.y }, cannons, mySeat);
-        const sim = simulateShot({
-            originX: me.x, originY: me.y, dir, f,
-            cannons, obstacles: state.obstacles, shooterSeat: mySeat,
+        const dir = E.aimDirection({ x: me.x, y: me.y }, cannons, mySeat);
+        const sim = E.simulateShot({
+            expr, originX: me.x, originY: me.y, dir,
+            shooterSeat: mySeat, cannons, obstacles: state.obstacles,
         });
+        if (!sim) { toast('Type a valid function first'); console.log('[GraphWar] invalid function for fire:', expr); return; }
 
         const seq = (state.shot && state.shot.seq ? state.shot.seq : 0) + 1;
         const shot = {
-            seq, by: mySeat, expr, js, dir,
+            // No `js`/`path`: clients rebuild the arc from `expr` + dir + impact via
+            // the wasm engine's resampleArc (the wasm parser is the single source).
+            seq, by: mySeat, expr, dir,
             outcome: sim.outcome, impact: sim.impact || null,
             ts: serverTimestamp(),
         };
@@ -294,7 +303,7 @@ export function start({ db, uid }) {
             hitSeat: sim.hitSeat >= 0 ? sim.hitSeat : null,
         }, state.players);
         const updates = {
-            // No `path`: every client rebuilds it from js + dir + impact (resampleArc).
+            // No `path`: every client rebuilds it from expr + dir + impact (resampleArc).
             shot,
         };
 
@@ -320,7 +329,7 @@ export function start({ db, uid }) {
             meta.status = 'over';
             meta.winner = survivors.length === 1 ? survivors[0] : null;
         } else {
-            meta.turnIndex = nextAliveSeat(
+            meta.turnIndex = E.nextAliveSeat(
                 state.players.map((p, i) => (p ? { alive: alive[i] } : null)),
                 mySeat,
             );
@@ -373,7 +382,7 @@ export function start({ db, uid }) {
             });
             return;
         }
-        const next = nextAliveSeat(
+        const next = E.nextAliveSeat(
             state.players.map((p) => (p ? { alive: p.alive } : null)),
             fromSeat,
         );
@@ -583,13 +592,12 @@ export function start({ db, uid }) {
         if (!shot || !state) return null;
         const shooter = state.players[shot.by];
         if (!shooter || shooter.x == null) return null;
-        const f = compile(shot.js);
-        if (!f) return null;
         const hasImpact = shot.impact && typeof shot.impact.x === 'number';
-        const pts = resampleArc({
-            originX: shooter.x, originY: shooter.y,
-            dir: shot.dir || 1, f, endX: hasImpact ? shot.impact.x : null,
+        const pts = E.resampleArc({
+            expr: shot.expr, originX: shooter.x, originY: shooter.y,
+            dir: shot.dir || 1, endX: hasImpact ? shot.impact.x : null,
         });
+        if (!pts) return null;
         if (hasImpact) pts.push([shot.impact.x, shot.impact.y]);
         return pts.length > 1 ? pts : null;
     }
@@ -646,31 +654,21 @@ export function start({ db, uid }) {
         return { entities, paths };
     }
 
-    /* Recompile my expression when the input text changes; rebuild the aim curve.
-       Gated on the raw input string so we only call the Wasm parser on change,
-       not every animation frame. */
+    /* Rebuild the aim curve via the wasm engine only when the expression, my cannon
+       position, or the firing direction changes — keyed so the steady state makes
+       no wasm calls per frame (resampleArc with endX=null sweeps to the field edge). */
     function pollAim() {
-        const input = inputEl ? inputEl.value.trim() : '';
-        if (input !== myJS) {
-            myJS = input;
-            myCompiled = compile(parseInputToJS(input));
-        }
-        buildAim();
-    }
-
-    function buildAim() {
-        aimPoints = null;
-        if (!canFire() || !myCompiled) return;
+        if (!canFire()) { aimPoints = null; aimKey = ''; return; }
         const me = state.players[mySeat];
-        const dir = aimDirection({ x: me.x, y: me.y }, cannonArray(), mySeat);
-        const pts = [];
-        const step = 0.05;
-        for (let x = me.x; x >= WORLD.xMin - 1 && x <= WORLD.xMax + 1; x += dir * step) {
-            const wy = me.y + myCompiled(x - me.x);
-            if (Number.isFinite(wy) && Math.abs(wy) < 1e4) pts.push([x, wy]);
-            else if (pts.length) break;
-        }
-        if (pts.length > 1) aimPoints = pts;
+        const dir = E.aimDirection({ x: me.x, y: me.y }, cannonArray(), mySeat);
+        const input = inputEl ? inputEl.value.trim() : '';
+        const key = `${input}|${me.x}|${me.y}|${dir}`;
+        if (key === aimKey) return;
+        aimKey = key;
+        const pts = input
+            ? E.resampleArc({ expr: input, originX: me.x, originY: me.y, dir, endX: null })
+            : null;
+        aimPoints = (pts && pts.length > 1) ? pts : null;
     }
 
     /* ════════════════════════════════════════════════════════════════════
@@ -769,22 +767,8 @@ export function start({ db, uid }) {
         if (!m.turnStartedAt) return (m.turnSeconds || TURN_SECONDS) * 1000;
         return m.turnStartedAt + (m.turnSeconds || TURN_SECONDS) * 1000 - serverNow();
     }
-    /* Parse the raw expression to JS via the Wasm parser exposed by gradgame-wasm.js.
-       Falls back to the debounced data-js attribute if the parser isn't ready. */
-    function parseInputToJS(input) {
-        if (input && window.gradGameParse) {
-            try {
-                const r = window.gradGameParse.toJavaScript(input);
-                if (r && r.ok) return r.text;
-                return '';
-            } catch (e) {
-                console.error('[GraphWar] parse failed', e);
-                return '';
-            }
-        }
-        const el = document.getElementById('js-parser-result');
-        return (el && el.dataset && el.dataset.js) ? el.dataset.js : '';
-    }
+    /* Render the raw expression to TeX via the Wasm parser exposed by
+       gradgame-wasm.js — used for the shared shot history. */
     function parseInputToTeX(input) {
         if (input && window.gradGameParse) {
             try {
@@ -795,9 +779,6 @@ export function start({ db, uid }) {
             }
         }
         return { ok: false, text: '' };
-    }
-    function readParsedJS() {
-        return parseInputToJS(inputEl ? inputEl.value.trim() : '');
     }
     function playerName() {
         let name = localStorage.getItem(KEY_NAME);

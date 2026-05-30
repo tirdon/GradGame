@@ -98,7 +98,7 @@ import Testing
 }
 
 @Test func parserSupportsNamedConstants() throws {
-    #expect(try parseExpressionToTeX("phi + gamma + pi + e") == "\\phi + \\gamma + \\pi + e")
+    #expect(try parseExpressionToTeX("phi + gamma + pi + e") == "\\varphi + \\gamma + \\pi + e")
     #expect(try parseExpressionToJavaScript("phi + gamma + pi + e") == "((1 + Math.sqrt(5)) / 2) + 0.5772156649015329 + Math.PI + Math.E")
 }
 
@@ -401,5 +401,117 @@ private func expectParseFailure(_ input: String) {
         _ = try parseExpressionToTeX(input)
         Issue.record("Expected parse failure for '\(input)'")
     } catch {
+    }
+}
+
+// MARK: - Native evaluator (Evaluator.swift)
+
+private func evalInput(_ input: String, x: Double, y: Double = 0) throws -> Double {
+    try parseAndResolveExpression(input).evaluate(x: x, y: y)
+}
+
+private func approx(_ a: Double, _ b: Double, _ tol: Double = 1e-9) -> Bool {
+    if a.isNaN && b.isNaN { return true }
+    return abs(a - b) <= tol
+}
+
+@Test func evaluatorHandlesArithmeticAndPowers() throws {
+    #expect(approx(try evalInput("x ^ 2", x: 3), 9))
+    #expect(approx(try evalInput("2 x", x: 4), 8))
+    #expect(approx(try evalInput("x / 2 + 1", x: 6), 4))
+    #expect(approx(try evalInput("-x", x: 5), -5))
+    #expect(approx(try evalInput("pow(x, 3)", x: 2), 8))
+    #expect(approx(try evalInput("x y + 1", x: 3, y: 4), 13))
+}
+
+@Test func evaluatorMatchesFunctionsAndConstants() throws {
+    #expect(approx(try evalInput("sin x", x: Double.pi / 2), 1))
+    #expect(approx(try evalInput("cos x", x: 0), 1))
+    #expect(approx(try evalInput("sqrt x", x: 9), 3))
+    #expect(approx(try evalInput("log x", x: 2.718281828459045), 1, 1e-9))
+    #expect(approx(try evalInput("sin^2 x", x: Double.pi / 2), 1))
+    #expect(approx(try evalInput("pi", x: 0), Double.pi))
+    #expect(approx(try evalInput("e", x: 0), 2.718281828459045))
+    #expect(approx(try evalInput("sec x", x: 0), 1))
+    // Undefined results stay non-finite rather than trapping.
+    #expect(!(try evalInput("log x", x: -1)).isFinite)
+}
+
+@Test func evaluatorResolvesDerivativesNumerically() throws {
+    // d/dx x^2 = 2x; central difference is exact for a quadratic up to fp noise.
+    #expect(approx(try evalInput("dx x^2", x: 3), 6, 1e-4))
+    #expect(approx(try evalInput("dx sin x", x: 0), 1, 1e-4))
+    // 2^x needs a log → left symbolic → numeric fallback ≈ ln2 at x=0.
+    #expect(approx(try evalInput("dx (2^x)", x: 0), 0.6931471805599453, 1e-4))
+}
+
+// MARK: - Trajectory engine (GameEngine.swift)
+
+private let testCannons: [Cannon] = [
+    Cannon(x: -8, y: 0, alive: true),
+    Cannon(x: 8, y: 0, alive: true),
+    Cannon(x: 0, y: 0, alive: false),
+    Cannon(x: 0, y: 0, alive: false),
+]
+
+private func sim(_ input: String, obstacles: [Obstacle]) throws -> ShotResult {
+    let expression = try parseAndResolveExpression(input)
+    return simulateShot(
+        expression: expression, originX: -8, originY: 0, dir: 1,
+        shooterSeat: 0, cannons: testCannons, obstacles: obstacles
+    )!
+}
+
+@Test func simulateShotDetectsHitBlockedOut() throws {
+    // Flat shot reaches the opponent at (8, 0).
+    let hit = try sim("0", obstacles: [])
+    #expect(hit.outcome == 1 && hit.hitSeat == 1)
+    // Same shot is stopped by an obstacle on the centerline first.
+    let blocked = try sim("0", obstacles: [Obstacle(x: 0, y: 0, r: 1.0)])
+    #expect(blocked.outcome == 2 && blocked.hitSeat == -1)
+    // A steep line climbs off the field.
+    let out = try sim("x", obstacles: [])
+    #expect(out.outcome == 0 && out.hitSeat == -1)
+}
+
+@Test func simulateShotRejectsNonFiniteOrigin() throws {
+    // f(0) undefined (1/x → division by zero) ⇒ the shot can't start.
+    let expression = try parseAndResolveExpression("1 / x")
+    #expect(simulateShot(expression: expression, originX: -8, originY: 0, dir: 1,
+                         shooterSeat: 0, cannons: testCannons, obstacles: []) == nil)
+}
+
+@Test func turnRotationSkipsDeadAndEmpty() {
+    // Seats 0 and 3 alive (mask 0b1001 = 9).
+    #expect(aliveCount(aliveMask: 0b1001) == 2)
+    #expect(nextAliveSeat(aliveMask: 0b1001, fromSeat: 0) == 3)
+    #expect(nextAliveSeat(aliveMask: 0b1001, fromSeat: 3) == 0)
+    // Sole survivor returns its own seat; empty board returns -1.
+    #expect(nextAliveSeat(aliveMask: 0b0100, fromSeat: 1) == 2)
+    #expect(nextAliveSeat(aliveMask: 0, fromSeat: 0) == -1)
+}
+
+@Test func placePlayersIsDeterministicSpacedAndBounded() {
+    let a = placePlayers(occupiedSeats: [0, 1, 2, 3], seed: 12345)
+    let b = placePlayers(occupiedSeats: [0, 1, 2, 3], seed: 12345)
+    #expect(a == b)                      // same seed ⇒ identical layout
+    #expect(a.count == 8)
+    var i = 0
+    while i < 4 {
+        let x = a[i * 2], y = a[i * 2 + 1]
+        #expect(x >= GraphWorld.xMin + 1.5 && x <= GraphWorld.xMax - 1.5)
+        #expect(y >= GraphWorld.yMin + 1.2 && y <= GraphWorld.yMax - 1.2)
+        i += 1
+    }
+    // Pairwise separation holds (field is large enough for 4 with guard < 400).
+    var p = 0
+    while p < 4 {
+        var q = p + 1
+        while q < 4 {
+            let dx = a[p * 2] - a[q * 2], dy = a[p * 2 + 1] - a[q * 2 + 1]
+            #expect((dx * dx + dy * dy).squareRoot() >= kMinSeparation - 1e-9)
+            q += 1
+        }
+        p += 1
     }
 }
