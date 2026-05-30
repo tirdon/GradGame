@@ -185,7 +185,7 @@
 
             const value = evaluateJavaScriptExpression(js.text);
             setOutput(evalResult, value, 'pass');
-            evalResult.dataset.value = value;
+            if (evalResult) { evalResult.dataset.value = value; }
         } catch (error) {
             // WasmTrapError carries the user-facing 'Expression too complex.' message.
             setTexOutput(error.message, 'fail', false);

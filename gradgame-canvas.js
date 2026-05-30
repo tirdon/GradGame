@@ -64,36 +64,38 @@
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        ctx.strokeStyle = 'rgba(100, 116, 139, 0.12)';
-        ctx.lineWidth = 1;
+        if (!window.webgpuGraphActive) {
+            ctx.strokeStyle = 'rgba(100, 116, 139, 0.12)';
+            ctx.lineWidth = 1;
 
-        for (let x = 48; x < canvas.width; x += 48) {
+            for (let x = 48; x < canvas.width; x += 48) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+
+            for (let y = 48; y < canvas.height; y += 48) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+
+            ctx.strokeStyle = 'rgba(37, 99, 235, 0.28)';
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, canvas.height);
+            ctx.moveTo(canvas.width * 0.08, canvas.height * 0.68);
+            ctx.bezierCurveTo(
+                canvas.width * 0.28,
+                canvas.height * 0.28,
+                canvas.width * 0.56,
+                canvas.height * 0.78,
+                canvas.width * 0.9,
+                canvas.height * 0.34
+            );
             ctx.stroke();
         }
-
-        for (let y = 48; y < canvas.height; y += 48) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(canvas.width, y);
-            ctx.stroke();
-        }
-
-        ctx.strokeStyle = 'rgba(37, 99, 235, 0.28)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(canvas.width * 0.08, canvas.height * 0.68);
-        ctx.bezierCurveTo(
-            canvas.width * 0.28,
-            canvas.height * 0.28,
-            canvas.width * 0.56,
-            canvas.height * 0.78,
-            canvas.width * 0.9,
-            canvas.height * 0.34
-        );
-        ctx.stroke();
 
         particles.forEach((particle) => {
             particle.update();

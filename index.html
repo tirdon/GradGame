@@ -14,7 +14,7 @@
 
         <!-- Theme Color & Mobile Apps -->
         <meta name="theme-color" content="#6366f1">
-        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
         <!-- Favicon (Modern Self-Contained SVG) -->
@@ -44,6 +44,7 @@
                 <div class="realtime-grid">
                     <output id="tex-parser-result" aria-live="polite">Loading parser...</output>
                 </div>
+                <output id="js-parser-result" class="sr-only" hidden aria-hidden="true"></output>
                 <input id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false" aria-label="Expression input">
             </section>
 
@@ -71,6 +72,7 @@
 
         <script src="gradgame-canvas.js"></script>
         <script defer src="gradgame-wasm.js"></script>
+        <script defer src="gradgame-graph.js"></script>
         <script defer src="gradgame-help.js"></script>
     </body>
 </html>
