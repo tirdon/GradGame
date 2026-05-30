@@ -236,6 +236,33 @@
         }
     }
 
+    // Records the current expression into the history panel. Fired on Enter (an
+    // explicit "commit" gesture) so history holds finished expressions, not every
+    // intermediate keystroke. Decoupled via a DOM event so gradgame-history.js owns
+    // the panel without reaching into this module's parse pipeline.
+    function commitToHistory() {
+        if (!wasmExports || !expressionInput) {
+            return;
+        }
+
+        const input = expressionInput.value.trim();
+        if (!input) {
+            return;
+        }
+
+        try {
+            const tex = parseToTeX(input);
+            document.dispatchEvent(new CustomEvent('gradgame:commit', {
+                detail: { input, tex: tex.text, ok: tex.ok },
+            }));
+        } catch (error) {
+            console.error(error);
+            if (error instanceof WasmTrapError) {
+                recoverWasm();
+            }
+        }
+    }
+
     async function instantiate() {
         const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1 };
         const instance = await WebAssembly.instantiate(wasmModule, imports);
@@ -311,6 +338,14 @@
         wasmExports = instance.exports;
         window.gradGameWasm = wasmExports;
 
+        // Expose a synchronous parse API for the game (fire-on-demand, so it does
+        // not depend on the debounced data-js attribute). The closures read the
+        // live `wasmExports`, so they keep working across trap recovery.
+        window.gradGameParse = {
+            toJavaScript: parseToJavaScript,
+            toTeX: parseToTeX,
+        };
+
         const value = wasmExports.add(2, 3);
         if (result) {
             result.textContent = `Swift add(2, 3) = ${value}`;
@@ -321,6 +356,7 @@
         expressionInput?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 logJavaScriptParse();
+                commitToHistory();
             }
         });
         evalX?.addEventListener('input', scheduleRender);

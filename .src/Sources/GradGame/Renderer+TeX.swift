@@ -246,7 +246,7 @@ struct TeXRenderer {
         case "pi":
             return "\\pi"
         case "phi":
-            return "\\phi"
+            return "\\varphi"
         case "gamma":
             return "\\gamma"
         case "infinity":

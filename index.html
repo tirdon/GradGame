@@ -31,13 +31,41 @@
         <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
     </head>
     <body>
+        <header class="site-header">
+            <!-- Seats 0 & 1 — click an open seat to claim it -->
+            <div class="player-rail" id="rail-left">
+                <button class="player-chip" data-seat="0" data-state="empty" type="button">
+                    <span class="player-chip-dot" aria-hidden="true"></span>
+                    <span class="player-chip-name">Open</span>
+                </button>
+                <button class="player-chip" data-seat="1" data-state="empty" type="button">
+                    <span class="player-chip-dot" aria-hidden="true"></span>
+                    <span class="player-chip-name">Open</span>
+                </button>
+            </div>
+
+            <div class="canvas-title">
+                <span class="canvas-mark" aria-hidden="true">🎓</span>
+                <span><h1>GradGame</h1></span>
+            </div>
+
+            <!-- Seats 2 & 3 -->
+            <div class="player-rail" id="rail-right">
+                <button class="player-chip" data-seat="2" data-state="empty" type="button">
+                    <span class="player-chip-dot" aria-hidden="true"></span>
+                    <span class="player-chip-name">Open</span>
+                </button>
+                <button class="player-chip" data-seat="3" data-state="empty" type="button">
+                    <span class="player-chip-dot" aria-hidden="true"></span>
+                    <span class="player-chip-name">Open</span>
+                </button>
+            </div>
+        </header>
+
         <main class="game-shell" id="session-new" aria-label="GradGame session">
-            <section class="canvas-frame" aria-label="Gradient game canvas">
+            <section class="canvas-frame" aria-label="Graph War battlefield">
                 <canvas id="canvas-new"></canvas>
-                <div class="canvas-title">
-                    <span class="canvas-mark" aria-hidden="true">🎓</span>
-                    <span>GradGame</span>
-                </div>
+                <div id="game-toast" class="game-toast" role="status" aria-live="polite"></div>
             </section>
 
             <section class="realtime-panel" aria-label="Realtime expression output">
@@ -45,9 +73,19 @@
                     <output id="tex-parser-result" aria-live="polite">Loading parser...</output>
                 </div>
                 <output id="js-parser-result" class="sr-only" hidden aria-hidden="true"></output>
+
+                <div class="game-hud">
+                    <span id="game-status" class="game-status">Connecting…</span>
+                    <span id="game-timer" class="game-timer" aria-live="off"></span>
+                    <button id="game-ready" class="game-ready" type="button" hidden>Ready</button>
+                </div>
+
                 <input id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false" aria-label="Expression input">
             </section>
 
+        </main>
+
+        <footer class="site-footer">
             <button class="help-btn" id="help-toggle" type="button" aria-label="Help">
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="10" cy="10" r="9" stroke="currentColor" stroke-width="1.5"/>
@@ -55,24 +93,83 @@
                     <circle cx="10" cy="14" r="0.75" fill="currentColor"/>
                 </svg>
             </button>
-        </main>
 
-        <!-- Help Popup Overlay -->
-        <div class="help-overlay" id="help-overlay" hidden>
-            <div class="help-popup" id="help-popup" role="dialog" aria-modal="true" aria-label="Help">
-                <div class="help-popup-header">
-                    <h3>Help</h3>
-                    <button class="help-popup-close" id="help-close" type="button" aria-label="Close">&times;</button>
-                </div>
-                <div class="help-popup-body" id="help-body">
-                    <p class="help-loading">Loading…</p>
+            <div class="help-overlay" id="help-overlay" hidden>
+                <div class="help-popup" id="help-popup" role="dialog" aria-modal="true" aria-label="Help">
+                    <div class="help-popup-header">
+                        <h3>Help</h3>
+                        <button class="help-popup-close" id="help-close" type="button" aria-label="Close">&times;</button>
+                    </div>
+                    <div class="help-popup-body" id="help-body">
+                        <p class="help-loading">Loading…</p>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <script src="gradgame-canvas.js"></script>
+            <div class="history-dock" id="history-dock" data-open="false">
+                <div class="history-panel" id="history-panel" role="region" aria-label="Expression history">
+                    <div class="history-panel-header">
+                        <h3>History</h3>
+                        <button class="history-clear" id="history-clear" type="button">Clear</button>
+                    </div>
+                    <ul class="history-list" id="history-list" aria-live="polite">
+                        <li class="history-empty">No expressions yet.</li>
+                    </ul>
+                </div>
+                <button class="history-toggle" id="history-toggle" type="button" aria-expanded="false" aria-controls="history-panel" aria-label="Toggle expression history">
+                    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                        <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M10 5.5V10l3 1.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="history-toggle-label">History</span>
+                </button>
+            </div>
+        </footer>
+
         <script defer src="gradgame-wasm.js"></script>
         <script defer src="gradgame-graph.js"></script>
         <script defer src="gradgame-help.js"></script>
+        <script defer src="gradgame-history.js"></script>
+        <script type="module">
+        // Firebase: anonymous auth + Realtime Database for the shared 4-player match.
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-auth.js";
+        import { getDatabase } from "https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBwl5fs3MEQh5_AIWVsc9rzfOUH70ypncw",
+            authDomain: "webdata-26edf.firebaseapp.com",
+            databaseURL: "https://webdata-26edf-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "webdata-26edf",
+            storageBucket: "webdata-26edf.firebasestorage.app",
+            messagingSenderId: "411882405034",
+            appId: "1:411882405034:web:5e98982af98fb49ca024d3"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getDatabase(app);
+        window.GG = { app, auth, db, uid: null };
+
+        // The page is a battlefield — drop the grapher chrome immediately, even if
+        // Firebase sign-in never resolves (graph.js defines Battlefield synchronously).
+        if (window.Battlefield) window.Battlefield.enterGameMode();
+
+        // Once anonymous sign-in resolves, hand the DB + uid to the game controller.
+        let launched = false;
+        onAuthStateChanged(auth, (user) => {
+            if (!user || launched) return;
+            launched = true;
+            window.GG.uid = user.uid;
+            import("./gradgame-game.js")
+                .then((m) => m.start({ db, auth, uid: user.uid }))
+                .catch((e) => console.error("game start failed", e));
+        });
+        signInAnonymously(auth).catch((e) => {
+            console.error("anonymous sign-in failed (enable Anonymous auth in Firebase console)", e);
+            const s = document.getElementById("game-status");
+            if (s) s.textContent = "Sign-in failed — enable Anonymous auth in Firebase.";
+        });
+        </script>
     </body>
 </html>

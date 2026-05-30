@@ -36,17 +36,218 @@
 
 html,
 body {
-    min-height: 100vh;
+    height: 100%;
 }
 
 body {
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
+    /* Header + shell are sized to fit exactly, so the page itself never scrolls. */
+    overflow: hidden;
     padding: clamp(1rem, 3vw, 2.5rem);
-    display: grid;
-    place-items: safe center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(0.5rem, 1.6vh, 1.1rem);
     background: var(--page-bg);
     color: var(--text-primary);
     font-family: 'Lora', Georgia, 'Times New Roman', serif;
+}
+
+.site-header {
+    flex: 0 0 auto;
+    width: min(100%, 1120px);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(0.4rem, 1.5vw, 1rem);
+}
+
+/* The title reuses .canvas-title (a position:absolute on-board badge); neutralise
+   that so it sits in the header's flex row as a centred title pill. */
+.site-header .canvas-title {
+    position: static;
+    inset: auto;
+    font-size: clamp(1.1rem, 2.4vw, 1.5rem);
+}
+
+.site-header .canvas-title h1 {
+    display: inline;
+    font: inherit;
+    letter-spacing: 0;
+}
+
+/* ── Player seats (header rails) ─────────────────────────────────────────── */
+.player-rail {
+    display: flex;
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+#rail-left  { justify-content: flex-end; }
+#rail-right { justify-content: flex-start; }
+
+.player-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    max-width: 11rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: 'EB Garamond', Georgia, 'Times New Roman', serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1;
+    transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease,
+                box-shadow 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+}
+
+.player-chip:hover,
+.player-chip:focus-visible {
+    transform: translateY(-1px);
+    outline: 0;
+}
+
+.player-chip-dot {
+    width: 0.7rem;
+    height: 0.7rem;
+    flex: none;
+    border-radius: 999px;
+    background: var(--pc, var(--border-strong));
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7);
+}
+
+.player-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.player-chip[data-state="empty"] {
+    border-style: dashed;
+}
+
+.player-chip[data-state="empty"] .player-chip-dot {
+    background: transparent;
+    border: 1.5px dashed var(--border-strong);
+    box-shadow: none;
+}
+
+.player-chip[data-state="occupied"],
+.player-chip[data-state="turn"] {
+    color: var(--text-primary);
+    border-color: var(--pc);
+}
+
+.player-chip[data-state="turn"] {
+    box-shadow: 0 0 0 2px var(--pc), 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.player-chip[data-state="dead"] {
+    opacity: 0.5;
+}
+
+.player-chip[data-state="dead"] .player-chip-name {
+    text-decoration: line-through;
+}
+
+.player-chip.is-self {
+    background: var(--accent-soft);
+}
+
+.player-chip.is-ready .player-chip-name::after {
+    content: " ✓";
+    color: var(--success);
+}
+
+/* ── In-panel game HUD ───────────────────────────────────────────────────── */
+.game-hud {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.6rem;
+    padding: 0 0.25rem;
+}
+
+.game-status {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.game-timer {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.game-timer.low {
+    color: var(--danger);
+}
+
+.game-ready {
+    flex: none;
+    padding: 0.4rem 0.95rem;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 800;
+    transition: background 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
+}
+
+.game-ready:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.game-ready:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* Floating toast over the battlefield */
+.game-toast {
+    position: absolute;
+    z-index: 5;
+    left: 50%;
+    top: 1rem;
+    transform: translate(-50%, -8px);
+    padding: 0.5rem 0.9rem;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.86);
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.game-toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+/* The footer only hosts the fixed/absolute overlays (help button, history dock).
+   `display: contents` keeps it out of the flex column so it adds no height. */
+.site-footer {
+    display: contents;
 }
 
 button,
@@ -57,9 +258,11 @@ input {
 .game-shell {
     position: relative;
     width: min(100%, 1120px);
-    /* Fit the viewport (no page scroll); fall back to min-height -> scroll when too short. */
-    height: min(720px, calc(100vh - 2 * clamp(1rem, 3vw, 2.5rem)));
-    min-height: 470px;
+    /* Fill whatever height is left under the header (capped), so the stack always
+       fits the viewport and the page never scrolls. */
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: 720px;
     padding: clamp(1.25rem, 3vw, 2.25rem);
     display: grid;
     grid-template-rows: minmax(180px, 1fr) auto;
@@ -153,6 +356,7 @@ input {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(6rem, 0.6fr);
     gap: 0.65rem;
     align-items: stretch;
+    border-radius: 999px;
 }
 
 #tex-parser-result,
@@ -312,6 +516,167 @@ input {
 
 .help-btn:active {
     transform: translateY(0) scale(0.98);
+}
+
+/* History (bottom-trailing) — mirrors the help button at bottom-left. */
+.history-dock {
+    position: absolute;
+    z-index: 3;
+    bottom: clamp(1.25rem, 3vw, 2.25rem);
+    right: clamp(1.25rem, 3vw, 2.25rem);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+}
+
+.history-dock[data-open="true"] {
+    gap: 0.6rem;
+}
+
+.history-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 3.5rem;
+    padding: 0 1.15rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.1);
+    transition: transform 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.history-toggle:hover,
+.history-toggle:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 14px 28px rgba(37, 99, 235, 0.18);
+    transform: translateY(-1px);
+    outline: 0;
+}
+
+.history-toggle:active {
+    transform: translateY(0) scale(0.98);
+}
+
+.history-toggle-label {
+    font-family: 'EB Garamond', Georgia, 'Times New Roman', serif;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.history-panel {
+    width: min(320px, 72vw);
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+    transform-origin: bottom right;
+    pointer-events: none;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    transition:
+        max-height 0.28s ease,
+        opacity 0.2s ease,
+        transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.history-dock[data-open="true"] .history-panel {
+    max-height: min(340px, 52vh);
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+
+.history-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.8rem 1rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.history-panel-header h3 {
+    font-family: 'EB Garamond', Georgia, 'Times New Roman', serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.history-clear {
+    border: 0;
+    border-radius: 999px;
+    padding: 0.25rem 0.65rem;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 700;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.history-clear:hover,
+.history-clear:focus-visible {
+    background: var(--accent-soft);
+    color: var(--accent);
+    outline: 0;
+}
+
+.history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.4rem;
+    max-height: min(268px, 40vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.history-empty {
+    padding: 1.25rem 0.5rem;
+    color: var(--text-secondary);
+    text-align: center;
+    font-size: 0.85rem;
+}
+
+.history-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.2s ease;
+}
+
+.history-item:hover,
+.history-item:focus-visible {
+    background: var(--surface-muted);
+    outline: 0;
+}
+
+.history-item-tex {
+    overflow: hidden;
+    color: var(--accent);
+    font-size: 0.95rem;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-item-tex .katex {
+    font-size: 1em;
 }
 
 #session-load {
@@ -630,6 +995,22 @@ input {
         height: 3.25rem;
         bottom: 1rem;
         left: 1rem;
+    }
+
+    .history-dock {
+        bottom: 1rem;
+        right: 1rem;
+    }
+
+    .history-toggle {
+        height: 3.25rem;
+        padding: 0;
+        width: 3.25rem;
+        justify-content: center;
+    }
+
+    .history-toggle-label {
+        display: none;
     }
 
     #session-load {

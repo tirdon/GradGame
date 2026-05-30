@@ -1,0 +1,603 @@
+/**
+ * gradgame-game.js — 4-player Graph War controller (browser glue).
+ * ──────────────────────────────────────────────────────────────────────────
+ * Imports the pure engine (gradgame-engine.js), syncs the shared match over
+ * Firebase Realtime Database, and feeds the WGSL battlefield renderer
+ * (window.Battlefield, from gradgame-graph.js) a fresh scene each frame.
+ *
+ * `start({ db, auth, uid })` is called by the Firebase bootstrap in index.html
+ * once anonymous sign-in resolves.
+ *
+ * Data model (games/main):
+ *   meta:    { status, round, turnIndex, winner, turnSeconds, turnStartedAt }
+ *   players/{0..3}: { uid, name, token, x, y, alive, ready, score, color, joinedAt }
+ *   obstacles: [ { x, y, r }, … ]
+ *   shot:    { seq, by, expr, js, path, outcome, impact, ts }   // latest shot only
+ *
+ * Authority: client-side. The shooter computes its own outcome and writes the
+ * shot + the resulting elimination/turn transition in one multi-path update;
+ * every client animates the latest `shot` (so off-turn players spectate).
+ * ──────────────────────────────────────────────────────────────────────────
+ */
+import {
+    ref, onValue, set, update, remove,
+    runTransaction, onDisconnect, serverTimestamp,
+} from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js';
+import {
+    WORLD, CANNON_RADIUS, TURN_SECONDS, PLAYER_COLORS, PLAYER_COLOR_HEX,
+    compile, simulateShot, resampleArc, aimDirection, nextAliveSeat,
+    placePlayers, generateObstacles,
+} from './gradgame-engine.js';
+
+const GAME_PATH = 'games/main';
+const KEY_TOKEN = 'gradgame:token';
+const KEY_NAME  = 'gradgame:name';
+
+let started = false;
+
+export function start({ db, uid }) {
+    if (started) return;
+    started = true;
+
+    /* ── Identity ──────────────────────────────────────────────────────── */
+    let token = localStorage.getItem(KEY_TOKEN);
+    if (!token) {
+        token = (crypto.randomUUID && crypto.randomUUID()) || String(Math.random()).slice(2);
+        localStorage.setItem(KEY_TOKEN, token);
+    }
+
+    /* ── Renderer hand-off ─────────────────────────────────────────────── */
+    if (window.Battlefield) window.Battlefield.enterGameMode();
+    console.log('[GraphWar] start: uid=', uid, 'seat-token=', token.slice(0, 8));
+    setTimeout(() => {
+        const ready = !!(window.Battlefield && window.Battlefield.ready);
+        console.log('[GraphWar] WebGPU renderer ready =', ready,
+            ready ? '' : '(blank board → check for a "WebGPU graph init failed" error above)');
+    }, 1800);
+
+    /* ── Local state ───────────────────────────────────────────────────── */
+    let state = null;           // { meta, players[4], obstacles[], shot }
+    let mySeat = -1;
+    let serverOffset = 0;
+    let seenSeq = 0;
+    let lastRoundKey = '';
+    const shotQueue = [];
+    let activeShot = null;      // { by, path, outcome, impact, t0, dur, doneAt }
+    const persistentArcs = [];  // resolved arcs kept (faint) for the round
+    let myCompiled = null;
+    let myJS = '';
+    let aimPoints = null;
+
+    const serverNow = () => Date.now() + serverOffset;
+    const gRef = (p) => ref(db, p ? `${GAME_PATH}/${p}` : GAME_PATH);
+
+    /* ── DOM ───────────────────────────────────────────────────────────── */
+    const $ = (id) => document.getElementById(id);
+    const chips = [0, 1, 2, 3].map((s) => document.querySelector(`.player-chip[data-seat="${s}"]`));
+    const statusEl = $('game-status');
+    const timerEl  = $('game-timer');
+    const readyBtn = $('game-ready');
+    const toastEl  = $('game-toast');
+    const inputEl  = $('session-load');
+
+    chips.forEach((chip, seat) => {
+        if (!chip) return;
+        chip.style.setProperty('--pc', PLAYER_COLOR_HEX[seat]);
+        chip.addEventListener('click', () => onChipClick(seat));
+    });
+    readyBtn?.addEventListener('click', toggleReady);
+    inputEl?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') fire();
+    });
+
+    /* ── Subscriptions ─────────────────────────────────────────────────── */
+    onValue(ref(db, '.info/serverTimeOffset'), (s) => { serverOffset = s.val() || 0; });
+    onValue(gRef(), onState);
+
+    /* ── Watchdog: turn timeout + vacated-turn recovery ────────────────── */
+    setInterval(watchdog, 700);
+
+    /* ── Render loop ───────────────────────────────────────────────────── */
+    requestAnimationFrame(frame);
+
+    /* ════════════════════════════════════════════════════════════════════
+       State
+       ════════════════════════════════════════════════════════════════════ */
+    function onState(snap) {
+        const v = snap.val() || {};
+        const meta = v.meta || { status: 'lobby', turnIndex: 0, round: 0, turnSeconds: TURN_SECONDS };
+        const playersRaw = v.players || {};
+        const players = [0, 1, 2, 3].map((i) => playersRaw[i] || null);
+        const obstacles = Array.isArray(v.obstacles)
+            ? v.obstacles
+            : (v.obstacles ? Object.values(v.obstacles) : []);
+        state = { meta, players, obstacles, shot: v.shot || null };
+
+        mySeat = players.findIndex((p) => p && (p.uid === uid || p.token === token));
+
+        // Fresh round / new match → drop the faint arcs from the previous one.
+        const roundKey = `${meta.round || 0}:${meta.status}`;
+        if (roundKey !== lastRoundKey) {
+            persistentArcs.length = 0;
+            lastRoundKey = roundKey;
+            if (meta.status !== 'playing') { activeShot = null; shotQueue.length = 0; }
+        }
+
+        // New shot to animate (every client watches the latest shot).
+        const shot = state.shot;
+        if (shot && shot.seq && shot.seq !== seenSeq) {
+            seenSeq = shot.seq;
+            shotQueue.push(shot);
+        }
+
+        updateHUD();
+        maybeStart();
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       Seats — claim / leave / ready
+       ════════════════════════════════════════════════════════════════════ */
+    function onChipClick(seat) {
+        if (!state) return;
+        const occupant = state.players[seat];
+        if (seat === mySeat) { leaveSeat(seat); return; }
+        if (occupant) { toast('Seat taken'); return; }
+        if (mySeat >= 0) { toast('You already hold a seat'); return; }
+        claimSeat(seat);
+    }
+
+    async function claimSeat(seat) {
+        const name = playerName();
+        try {
+            const res = await runTransaction(gRef(`players/${seat}`), (cur) => {
+                if (cur) return; // occupied → abort
+                return {
+                    uid, name, token, color: seat,
+                    x: 0, y: 0, alive: false, ready: false, score: 0,
+                    joinedAt: Date.now(),
+                };
+            });
+            if (res.committed) {
+                mySeat = seat;
+                onDisconnect(gRef(`players/${seat}`)).remove(); // closing the tab frees the seat
+            } else {
+                toast('Seat taken');
+            }
+        } catch (err) {
+            console.error('claim failed', err);
+        }
+    }
+
+    async function leaveSeat(seat) {
+        try {
+            await onDisconnect(gRef(`players/${seat}`)).cancel();
+            await remove(gRef(`players/${seat}`));
+            mySeat = -1;
+        } catch (err) {
+            console.error('leave failed', err);
+        }
+    }
+
+    function toggleReady() {
+        if (mySeat < 0 || !state) return;
+        if (state.meta.status === 'playing') return;
+        const me = state.players[mySeat];
+        set(gRef(`players/${mySeat}/ready`), !(me && me.ready));
+    }
+
+    /* All occupied seats ready (≥2) → the lowest seat performs the start write. */
+    function maybeStart() {
+        if (mySeat < 0 || !state) return;
+        if (state.meta.status === 'playing') return;
+        const occ = occupiedSeats();
+        if (occ.length < 2 || mySeat !== occ[0]) return;
+        if (!occ.every((i) => state.players[i].ready)) return;
+
+        const positions = placePlayers(occ);
+        const obstacles = generateObstacles(positions);
+        const updates = { obstacles, shot: null };
+        for (const i of occ) {
+            updates[`players/${i}/x`] = positions[i].x;
+            updates[`players/${i}/y`] = positions[i].y;
+            updates[`players/${i}/alive`] = true;
+            updates[`players/${i}/ready`] = false;
+            updates[`players/${i}/score`] = 0;
+        }
+        updates.meta = {
+            status: 'playing',
+            round: (state.meta.round || 0) + 1,
+            turnIndex: occ[0],
+            winner: null,
+            turnSeconds: TURN_SECONDS,
+            turnStartedAt: serverTimestamp(),
+        };
+        console.log('[GraphWar] starting match: seats', occ, 'positions', positions);
+        update(gRef(), updates)
+            .then(() => console.log('[GraphWar] start write OK'))
+            .catch((err) => {
+                console.error('[GraphWar] start write FAILED (re-paste database.rules.json — a client must be able to write other seats):', err);
+                toast('Start blocked — update database rules');
+            });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       Firing — compute the shot client-side, write shot + turn transition
+       ════════════════════════════════════════════════════════════════════ */
+    function fire() {
+        if (!canFire()) {
+            console.log('[GraphWar] fire blocked:', {
+                hasState: !!state, status: state && state.meta.status,
+                mySeat, turnIndex: state && state.meta.turnIndex,
+                alive: state && mySeat >= 0 && state.players[mySeat] && state.players[mySeat].alive,
+                activeShot: !!activeShot, queued: shotQueue.length,
+            });
+            return;
+        }
+        const me = state.players[mySeat];
+        const js = readParsedJS();
+        console.log('[GraphWar] fire js=', JSON.stringify(js));
+        const f = compile(js);
+        if (!f) { toast('Type a valid function first'); console.log('[GraphWar] compile failed for js'); return; }
+
+        const cannons = cannonArray();
+        const dir = aimDirection({ x: me.x, y: me.y }, cannons, mySeat);
+        const sim = simulateShot({
+            originX: me.x, originY: me.y, dir, f,
+            cannons, obstacles: state.obstacles, shooterSeat: mySeat,
+        });
+
+        const seq = (state.shot && state.shot.seq ? state.shot.seq : 0) + 1;
+        const updates = {
+            // No `path`: every client rebuilds it from js + dir + impact (resampleArc).
+            shot: {
+                seq, by: mySeat, expr: inputEl.value.trim(), js, dir,
+                outcome: sim.outcome, impact: sim.impact || null,
+                ts: serverTimestamp(),
+            },
+        };
+
+        const alive = state.players.map((p) => p && p.alive);
+        if (sim.outcome === 'hit' && sim.hitSeat >= 0) {
+            updates[`players/${sim.hitSeat}/alive`] = false;
+            alive[sim.hitSeat] = false;
+            updates[`players/${mySeat}/score`] = (me.score || 0) + 1;
+        }
+
+        const survivors = [];
+        for (let i = 0; i < 4; i++) if (state.players[i] && alive[i]) survivors.push(i);
+
+        const meta = {
+            status: 'playing',
+            round: state.meta.round || 1,
+            turnIndex: state.meta.turnIndex,
+            winner: null,
+            turnSeconds: state.meta.turnSeconds || TURN_SECONDS,
+            turnStartedAt: serverTimestamp(),
+        };
+        if (survivors.length <= 1) {
+            meta.status = 'over';
+            meta.winner = survivors.length === 1 ? survivors[0] : null;
+        } else {
+            meta.turnIndex = nextAliveSeat(
+                state.players.map((p, i) => (p ? { alive: alive[i] } : null)),
+                mySeat,
+            );
+        }
+        updates.meta = meta;
+
+        console.log('[GraphWar] firing shot:', { outcome: sim.outcome, hitSeat: sim.hitSeat, pathLen: sim.path.length, nextTurn: meta.turnIndex });
+        update(gRef(), updates)
+            .then(() => console.log('[GraphWar] shot write OK'))
+            .catch((err) => { console.error('[GraphWar] shot write FAILED (check RTDB rules):', err); toast('Write blocked — check database rules'); });
+        inputEl.value = '';
+        aimPoints = null;
+    }
+
+    function canFire() {
+        return state && state.meta.status === 'playing'
+            && mySeat >= 0 && state.meta.turnIndex === mySeat
+            && state.players[mySeat] && state.players[mySeat].alive
+            && !activeShot && shotQueue.length === 0;
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       Watchdog — only one client ever advances a given turn
+       ════════════════════════════════════════════════════════════════════ */
+    function watchdog() {
+        if (!state || state.meta.status !== 'playing' || activeShot) return;
+        const ti = state.meta.turnIndex;
+        const holder = state.players[ti];
+        const remaining = remainingMs();
+        const aliveSeats = aliveSeatList();
+
+        if (mySeat === ti && holder && holder.alive && remaining <= 0) {
+            passTurn(ti);                                   // my time is up
+        } else if ((!holder || !holder.alive) && aliveSeats[0] === mySeat && remaining < -1000) {
+            passTurn(ti);                                   // turn holder vanished
+        } else if (remaining < -5000 && aliveSeats[0] === mySeat) {
+            passTurn(ti);                                   // stalled (holder disconnected)
+        }
+    }
+
+    function passTurn(fromSeat) {
+        const survivors = aliveSeatList();
+        if (survivors.length <= 1) {
+            update(gRef('meta'), {
+                status: 'over', winner: survivors[0] ?? null,
+                turnIndex: state.meta.turnIndex,
+            });
+            return;
+        }
+        const next = nextAliveSeat(
+            state.players.map((p) => (p ? { alive: p.alive } : null)),
+            fromSeat,
+        );
+        update(gRef('meta'), {
+            status: 'playing', turnIndex: next, winner: null,
+            round: state.meta.round || 1,
+            turnSeconds: state.meta.turnSeconds || TURN_SECONDS,
+            turnStartedAt: serverTimestamp(),
+        });
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       Animation + scene
+       ════════════════════════════════════════════════════════════════════ */
+    function frame(now) {
+        requestAnimationFrame(frame);
+        pollAim();
+        stepAnimation(now);
+        if (window.Battlefield) window.Battlefield.setScene(buildScene());
+        updateTimer();
+    }
+
+    function stepAnimation(now) {
+        if (!activeShot && shotQueue.length) {
+            const s = shotQueue.shift();
+            const path = pathForShot(s);                 // rebuilt locally; RTDB carries no path
+            const dur = Math.min(1700, Math.max(450, (path ? path.length : 0) * 3));
+            activeShot = { ...s, path, t0: now, dur, doneAt: 0 };
+        }
+        if (!activeShot) return;
+        const elapsed = now - activeShot.t0;
+        if (elapsed >= activeShot.dur) {
+            if (!activeShot.doneAt) activeShot.doneAt = now;
+            if (now - activeShot.doneAt > 520) {            // brief linger on impact
+                if (activeShot.path && activeShot.path.length > 1) {
+                    persistentArcs.push({ points: activeShot.path, seat: activeShot.by });
+                }
+                activeShot = null;
+            }
+        }
+    }
+
+    /* Rebuild a shot's polyline from its compact RTDB record (js + dir + impact).
+       The shooter's cannon hasn't moved since firing, so its current position is
+       the firing origin; the stored impact x ends the arc exactly where the
+       authoritative sim stopped, independent of since-changed alive/obstacle state. */
+    function pathForShot(shot) {
+        if (!shot || !state) return null;
+        const shooter = state.players[shot.by];
+        if (!shooter || shooter.x == null) return null;
+        const f = compile(shot.js);
+        if (!f) return null;
+        const hasImpact = shot.impact && typeof shot.impact.x === 'number';
+        const pts = resampleArc({
+            originX: shooter.x, originY: shooter.y,
+            dir: shot.dir || 1, f, endX: hasImpact ? shot.impact.x : null,
+        });
+        if (hasImpact) pts.push([shot.impact.x, shot.impact.y]);
+        return pts.length > 1 ? pts : null;
+    }
+
+    function buildScene() {
+        const entities = [];
+        const paths = [];
+        if (!state) return { entities, paths };
+
+        // Obstacles
+        for (const o of state.obstacles) {
+            entities.push({ x: o.x, y: o.y, r: o.r, kind: 0, color: [0.30, 0.35, 0.45, 0.95] });
+        }
+
+        // Faint resolved arcs from this round
+        for (const arc of persistentArcs) {
+            const c = PLAYER_COLORS[arc.seat] || [1, 1, 1, 1];
+            paths.push({ points: arc.points, color: [c[0], c[1], c[2], 0.22], width: 2 });
+        }
+
+        // Aim preview (my turn)
+        if (aimPoints && aimPoints.length > 1 && canFire()) {
+            const c = PLAYER_COLORS[mySeat] || [1, 1, 1, 1];
+            paths.push({ points: aimPoints, color: [c[0], c[1], c[2], 0.40], width: 1.5 });
+        }
+
+        // Active shot trail + head
+        if (activeShot && activeShot.path && activeShot.path.length > 1) {
+            const c = PLAYER_COLORS[activeShot.by] || [1, 1, 1, 1];
+            const n = activeShot.path.length;
+            const progress = Math.min(1, (performance.now() - activeShot.t0) / activeShot.dur);
+            const head = Math.max(1, Math.floor(progress * (n - 1)));
+            paths.push({ points: activeShot.path.slice(0, head + 1), color: [c[0], c[1], c[2], 0.95], width: 3 });
+            const hp = activeShot.path[head];
+            entities.push({ x: hp[0], y: hp[1], r: CANNON_RADIUS * 0.55, kind: 2, color: c });
+        }
+
+        // Cannons (+ turn glow) — only once a match has placed them (not at the
+        // lobby origin); shown during play and on the final 'over' board.
+        const playing = state.meta.status === 'playing';
+        const showBoard = playing || state.meta.status === 'over';
+        for (let seat = 0; showBoard && seat < 4; seat++) {
+            const p = state.players[seat];
+            if (!p || p.x == null) continue;
+            const isTurn = playing && state.meta.turnIndex === seat && p.alive && !activeShot;
+            const base = PLAYER_COLORS[seat] || [1, 1, 1, 1];
+            if (isTurn) {
+                entities.push({ x: p.x, y: p.y, r: CANNON_RADIUS * 2.4, kind: 3, color: [base[0], base[1], base[2], 0.5] });
+            }
+            const color = p.alive ? base : [0.5, 0.52, 0.58, 0.45];
+            entities.push({ x: p.x, y: p.y, r: CANNON_RADIUS, kind: 1, color });
+        }
+
+        return { entities, paths };
+    }
+
+    /* Recompile my expression when the input text changes; rebuild the aim curve.
+       Gated on the raw input string so we only call the Wasm parser on change,
+       not every animation frame. */
+    function pollAim() {
+        const input = inputEl ? inputEl.value.trim() : '';
+        if (input !== myJS) {
+            myJS = input;
+            myCompiled = compile(parseInputToJS(input));
+        }
+        buildAim();
+    }
+
+    function buildAim() {
+        aimPoints = null;
+        if (!canFire() || !myCompiled) return;
+        const me = state.players[mySeat];
+        const dir = aimDirection({ x: me.x, y: me.y }, cannonArray(), mySeat);
+        const pts = [];
+        const step = 0.05;
+        for (let x = me.x; x >= WORLD.xMin - 1 && x <= WORLD.xMax + 1; x += dir * step) {
+            const wy = me.y + myCompiled(x - me.x);
+            if (Number.isFinite(wy) && Math.abs(wy) < 1e4) pts.push([x, wy]);
+            else if (pts.length) break;
+        }
+        if (pts.length > 1) aimPoints = pts;
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       HUD
+       ════════════════════════════════════════════════════════════════════ */
+    function updateHUD() {
+        if (!state) return;
+        const { meta, players } = state;
+        const playing = meta.status === 'playing';
+
+        chips.forEach((chip, seat) => {
+            if (!chip) return;
+            const p = players[seat];
+            const nameEl = chip.querySelector('.player-chip-name');
+            let st;
+            if (!p) st = 'empty';
+            else if (!p.alive && playing) st = 'dead';
+            else if (playing && meta.turnIndex === seat) st = 'turn';
+            else st = 'occupied';
+            chip.dataset.state = st;
+            chip.classList.toggle('is-self', seat === mySeat);
+            chip.classList.toggle('is-ready', Boolean(p && p.ready && !playing));
+            if (nameEl) {
+                nameEl.textContent = p
+                    ? p.name + (seat === mySeat ? ' (you)' : '')
+                    : 'Open';
+            }
+        });
+
+        // Status line
+        if (meta.status === 'over') {
+            const w = meta.winner;
+            const wp = w != null ? players[w] : null;
+            statusEl.textContent = wp ? `${wp.name} wins! 🏆` : 'Match over';
+        } else if (playing) {
+            const tp = players[meta.turnIndex];
+            if (mySeat >= 0 && meta.turnIndex === mySeat) statusEl.textContent = 'Your turn — type f(x) and press Enter';
+            else statusEl.textContent = `${tp ? tp.name : 'Someone'} is aiming…`;
+        } else {
+            const occ = occupiedSeats();
+            statusEl.textContent = occ.length < 2
+                ? 'Waiting for players… claim a seat above'
+                : 'Ready up to start';
+        }
+
+        // Ready / start button
+        if (mySeat < 0) {
+            readyBtn.hidden = true;
+        } else {
+            readyBtn.hidden = false;
+            if (playing) {
+                readyBtn.disabled = true;
+                readyBtn.textContent = 'In play';
+            } else {
+                readyBtn.disabled = false;
+                readyBtn.textContent = (players[mySeat] && players[mySeat].ready) ? 'Ready ✓ (cancel)' : 'Ready';
+            }
+        }
+
+        // Input availability
+        const my = canFire();
+        if (inputEl) {
+            inputEl.disabled = playing && !my && mySeat >= 0 && false; // keep editable for live preview
+            inputEl.placeholder = my ? 'sin x   ·   x^2/8   ·   2 sin x' : 'sin x y + x ^ 2 + 3';
+        }
+    }
+
+    function updateTimer() {
+        if (!state || state.meta.status !== 'playing' || !timerEl) {
+            if (timerEl) timerEl.textContent = '';
+            return;
+        }
+        const remaining = Math.max(0, Math.ceil(remainingMs() / 1000));
+        timerEl.textContent = `⏱ ${remaining}s`;
+        timerEl.classList.toggle('low', remaining <= 5);
+    }
+
+    /* ════════════════════════════════════════════════════════════════════
+       Helpers
+       ════════════════════════════════════════════════════════════════════ */
+    function occupiedSeats() {
+        const out = [];
+        for (let i = 0; i < 4; i++) if (state.players[i]) out.push(i);
+        return out;
+    }
+    function aliveSeatList() {
+        const out = [];
+        for (let i = 0; i < 4; i++) if (state.players[i] && state.players[i].alive) out.push(i);
+        return out;
+    }
+    function cannonArray() {
+        return state.players.map((p) => (p ? { x: p.x, y: p.y, alive: p.alive } : null));
+    }
+    function remainingMs() {
+        const m = state.meta;
+        if (!m.turnStartedAt) return (m.turnSeconds || TURN_SECONDS) * 1000;
+        return m.turnStartedAt + (m.turnSeconds || TURN_SECONDS) * 1000 - serverNow();
+    }
+    /* Parse the raw expression to JS via the Wasm parser exposed by gradgame-wasm.js.
+       Falls back to the debounced data-js attribute if the parser isn't ready. */
+    function parseInputToJS(input) {
+        if (input && window.gradGameParse) {
+            try {
+                const r = window.gradGameParse.toJavaScript(input);
+                if (r && r.ok) return r.text;
+                return '';
+            } catch (e) {
+                console.error('[GraphWar] parse failed', e);
+                return '';
+            }
+        }
+        const el = document.getElementById('js-parser-result');
+        return (el && el.dataset && el.dataset.js) ? el.dataset.js : '';
+    }
+    function readParsedJS() {
+        return parseInputToJS(inputEl ? inputEl.value.trim() : '');
+    }
+    function playerName() {
+        let name = localStorage.getItem(KEY_NAME);
+        if (!name) {
+            name = (window.prompt('Pick a name', 'Player') || 'Player').trim().slice(0, 24) || 'Player';
+            localStorage.setItem(KEY_NAME, name);
+        }
+        return name;
+    }
+    let toastTimer = null;
+    function toast(msg) {
+        if (!toastEl) return;
+        toastEl.textContent = msg;
+        toastEl.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+    }
+}

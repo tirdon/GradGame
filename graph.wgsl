@@ -272,3 +272,172 @@ fn curveFS(in : CurveVSOut) -> @location(0) vec4f {
 fn isFinite(v : f32) -> bool {
     return !(v != v) && abs(v) < 1.0e+15;  // NaN check + Inf guard
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GRAPH WAR — battlefield geometry rendered entirely on the GPU
+   ═══════════════════════════════════════════════════════════════════════════
+   Two extra pipelines turn the function-grapher canvas into a game board:
+
+     • entityVS/entityFS — instanced SDF discs for obstacles, cannons, the
+       projectile head and the active-turn glow.
+     • pathVS/pathFS     — generic thick world-space polylines for trajectory
+       arcs, the projectile trail, cannon barrels and the aim preview.
+
+   Both reuse the shared Uniforms viewport (xMin..yMax) for the world→clip
+   mapping below. They live in group(0) at fresh bindings (3, 4) so each
+   pipeline binds only what it references.                                    */
+
+fn worldToNdc(p : vec2f) -> vec2f {
+    let nx = (p.x - u.xMin) / (u.xMax - u.xMin) * 2.0 - 1.0;
+    let ny = (p.y - u.yMin) / (u.yMax - u.yMin) * 2.0 - 1.0;
+    return vec2f(nx, ny);
+}
+
+/* ─── Entities: instanced discs ────────────────────────────────────────────
+   Each instance is a world-space circle. The vertex shader expands a unit
+   quad (slightly oversized for glow/AA) around the centre; the fragment
+   shader draws an SDF disc whose look depends on `kind`.                     */
+
+struct Entity {
+    center : vec2f,   // world coords
+    radius : f32,     // world units
+    kind   : f32,     // 0 obstacle · 1 cannon · 2 projectile head · 3 turn glow
+    color  : vec4f,   // straight rgba
+}
+@group(0) @binding(3) var<storage, read> entities : array<Entity>;
+
+struct EntityVSOut {
+    @builtin(position) pos   : vec4f,
+    @location(0)       local : vec2f,   // [-M, M]; |local| = 1 at the true radius
+    @location(1)       kind  : f32,
+    @location(2)       color : vec4f,
+}
+
+const ENTITY_MARGIN : f32 = 1.3;
+
+@vertex
+fn entityVS(@builtin(vertex_index) vid : u32,
+            @builtin(instance_index) iid : u32) -> EntityVSOut {
+    var corners = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f( 1.0, -1.0), vec2f(-1.0,  1.0),
+        vec2f(-1.0,  1.0), vec2f( 1.0, -1.0), vec2f( 1.0,  1.0)
+    );
+    let c = corners[vid] * ENTITY_MARGIN;
+    let e = entities[iid];
+    let world = e.center + c * e.radius;
+
+    var out : EntityVSOut;
+    out.pos   = vec4f(worldToNdc(world), 0.0, 1.0);
+    out.local = c;
+    out.kind  = e.kind;
+    out.color = e.color;
+    return out;
+}
+
+@fragment
+fn entityFS(in : EntityVSOut) -> @location(0) vec4f {
+    let d  = length(in.local);                  // 1.0 at the true radius
+    let aa = max(fwidth(d), 0.0015);
+    let k  = in.kind;
+
+    var rgb   = in.color.rgb;
+    var alpha = 0.0;
+
+    if (k < 0.5) {
+        // obstacle: filled disc with a little radial shading
+        let fill = 1.0 - smoothstep(1.0 - aa, 1.0, d);
+        rgb   = in.color.rgb * mix(1.0, 0.62, clamp(d, 0.0, 1.0));
+        alpha = fill * in.color.a;
+    } else if (k < 1.5) {
+        // cannon: filled disc + bright rim
+        let fill = 1.0 - smoothstep(1.0 - aa, 1.0, d);
+        let rim  = smoothstep(0.72, 0.82, d) * (1.0 - smoothstep(0.97, 1.0 + aa, d));
+        rgb   = mix(in.color.rgb, vec3f(1.0), rim * 0.65);
+        alpha = max(fill, rim) * in.color.a;
+    } else if (k < 2.5) {
+        // projectile head: white-hot core + soft glow
+        let core = 1.0 - smoothstep(0.30 - aa, 0.30 + aa, d);
+        let glow = (1.0 - smoothstep(0.30, 1.0, d)) * 0.55;
+        rgb   = mix(in.color.rgb, vec3f(1.0), core);
+        alpha = clamp(max(core, glow), 0.0, 1.0) * in.color.a;
+    } else {
+        // turn glow: hollow halo ring
+        let ring = smoothstep(0.52, 0.86, d) * (1.0 - smoothstep(0.92, 1.0, d));
+        alpha = ring * in.color.a;
+    }
+
+    if (alpha <= 0.001) { discard; }
+    return vec4f(rgb, alpha);
+}
+
+/* ─── Paths: thick world-space polylines ───────────────────────────────────
+   One storage buffer holds every polyline concatenated. A vertex whose
+   `flags` marks a polyline start breaks the segment that would bridge into
+   it, so all arcs draw in a single instanced-free draw of (count-1)*6 verts.
+   Built to mirror curveVS, but in world coords with per-vertex colour/width. */
+
+struct PathVert {
+    pos   : vec2f,   // world coords
+    flags : f32,     // 1.0 = polyline start (segment before it is a gap)
+    width : f32,     // half-thickness in px
+    color : vec4f,   // straight rgba
+}
+@group(0) @binding(4) var<storage, read> pathVerts : array<PathVert>;
+
+struct PathVSOut {
+    @builtin(position) pos   : vec4f,
+    @location(0)       dist  : f32,
+    @location(1)       fade  : f32,
+    @location(2)       color : vec4f,
+}
+
+@vertex
+fn pathVS(@builtin(vertex_index) vid : u32) -> PathVSOut {
+    let segIdx   = vid / 6u;
+    let cornerId = vid % 6u;
+
+    var endF  : f32;
+    var sideF : f32;
+    switch cornerId {
+        case 0u: { endF = 0.0; sideF = -1.0; }
+        case 1u: { endF = 0.0; sideF =  1.0; }
+        case 2u: { endF = 1.0; sideF = -1.0; }
+        case 3u: { endF = 1.0; sideF = -1.0; }
+        case 4u: { endF = 0.0; sideF =  1.0; }
+        case 5u: { endF = 1.0; sideF =  1.0; }
+        default: { endF = 0.0; sideF =  0.0; }
+    }
+
+    let a = pathVerts[segIdx];
+    let b = pathVerts[segIdx + 1u];
+
+    // Gap when the next vertex begins a new polyline.
+    let valid = b.flags < 0.5;
+
+    let pxA = (worldToNdc(a.pos) * 0.5 + 0.5) * u.resolution;
+    let pxB = (worldToNdc(b.pos) * 0.5 + 0.5) * u.resolution;
+    let dir = pxB - pxA;
+    let len = length(dir);
+    let dd  = select(vec2f(1.0, 0.0), dir / len, len > 0.001);
+    let nn  = vec2f(-dd.y, dd.x);
+
+    let w   = a.width;
+    let pxP = mix(pxA, pxB, endF) + nn * sideF * (w + 1.0);
+    let ndc = (pxP / u.resolution) * 2.0 - 1.0;
+
+    var out : PathVSOut;
+    out.pos   = vec4f(ndc.x, ndc.y, 0.0, 1.0);
+    out.dist  = sideF;
+    out.fade  = select(0.0, 1.0, valid);
+    out.color = a.color;
+    return out;
+}
+
+@fragment
+fn pathFS(in : PathVSOut) -> @location(0) vec4f {
+    if (in.fade < 0.5) { discard; }
+    let d  = abs(in.dist);
+    let aa = 1.0 - smoothstep(0.55, 1.0, d);
+    return vec4f(in.color.rgb, in.color.a * aa);
+}
