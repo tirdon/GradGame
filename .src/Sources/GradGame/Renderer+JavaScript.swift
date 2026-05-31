@@ -5,15 +5,9 @@ final class JavaScriptRenderer {
         render(expression, parentPrecedence: 0, position: .none)
     }
 
-    private enum Position {
-        case none
-        case left
-        case right
-    }
-
-    private func render(_ expression: Expression, parentPrecedence: Int, position: Position) -> String {
+    private func render(_ expression: Expression, parentPrecedence: Int, position: RenderPosition) -> String {
         let rendered: String
-        let precedence = self.precedence(of: expression)
+        let precedence = expression.renderPrecedence
 
         switch expression {
         case let .number(value):
@@ -43,7 +37,7 @@ final class JavaScriptRenderer {
             rendered = renderDerivative(variable: variable, argument: argument)
         }
 
-        if shouldWrap(expression, precedence: precedence, parentPrecedence: parentPrecedence, position: position) {
+        if expression.needsParentheses(precedence: precedence, parentPrecedence: parentPrecedence, position: position) {
             return "(\(rendered))"
         }
 
@@ -51,7 +45,7 @@ final class JavaScriptRenderer {
     }
 
     private func renderBinary(_ operation: BinaryOperator, _ lhs: Expression, _ rhs: Expression) -> String {
-        let precedence = precedence(ofBinary: operation)
+        let precedence = operation.precedence
 
         switch operation {
         case .add:
@@ -82,8 +76,6 @@ final class JavaScriptRenderer {
             return "((1 + Math.sqrt(5)) / 2)"
         case "gamma":
             return "0.5772156649015329"
-        case "infinity":
-            return "Infinity"
         default:
             return "NaN"
         }
@@ -124,42 +116,4 @@ final class JavaScriptRenderer {
         return "(((\(step)) => (\(plus) - \(minus)) / (2 * \(step)))(0.00001))"
     }
 
-    private func shouldWrap(_ expression: Expression, precedence: Int, parentPrecedence: Int, position: Position) -> Bool {
-        if precedence < parentPrecedence {
-            return true
-        }
-
-        if position == .right,
-           precedence == parentPrecedence,
-           case let .binary(operation, _, _) = expression {
-            return operation == .subtract || operation == .divide || operation == .power
-        }
-
-        return false
-    }
-
-    private func precedence(of expression: Expression) -> Int {
-        switch expression {
-        case .number, .variable, .constant, .function, .derivative:
-            return 5
-        case .unary:
-            return 3
-        case let .binary(operation, _, _):
-            return precedence(ofBinary: operation)
-        }
-    }
-
-    /// A binary node's precedence depends only on its operator, so callers that
-    /// already hold the operator avoid allocating a throwaway `.binary` node
-    /// (an `indirect` enum, hence heap-boxed) just to read it back.
-    private func precedence(ofBinary operation: BinaryOperator) -> Int {
-        switch operation {
-        case .add, .subtract:
-            return 1
-        case .multiply, .implicitMultiply, .divide:
-            return 2
-        case .power:
-            return 4
-        }
-    }
 }

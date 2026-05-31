@@ -1,6 +1,5 @@
 (() => {
     const overlay = document.getElementById('help-overlay');
-    const popup = document.getElementById('help-popup');
     const toggleBtn = document.getElementById('help-toggle');
     const closeBtn = document.getElementById('help-close');
     const body = document.getElementById('help-body');

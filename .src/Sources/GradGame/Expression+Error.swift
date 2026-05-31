@@ -12,6 +12,7 @@ enum ExpressionParserError: Error, Equatable, CustomStringConvertible {
     case expressionTooComplex
     case numberTooLarge
     case notANumber
+    case divisionByZero
 
     var description: String {
         switch self {
@@ -41,6 +42,8 @@ enum ExpressionParserError: Error, Equatable, CustomStringConvertible {
             return "Number is too large (exponent exceeds 38)."
         case .notANumber:
             return "Result is not a number (0 / 0 is undefined)."
+        case .divisionByZero:
+            return "Result is infinite (division by zero)."
         }
     }
 }

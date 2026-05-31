@@ -72,7 +72,6 @@ extension Expression {
         case "e": return 2.718281828459045        // Math.E
         case "phi": return (1 + 5.0.squareRoot()) / 2
         case "gamma": return 0.5772156649015329
-        case "infinity": return .infinity
         default: return .nan
         }
     }

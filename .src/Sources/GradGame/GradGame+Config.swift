@@ -24,12 +24,7 @@ public func gradGameFirebaseConfig() -> UnsafePointer<UInt8>? {
     let bytes = Array(firebaseConfigJSON.utf8)
     firebaseConfigByteCount = Int32(bytes.count)
     guard !bytes.isEmpty else { return nil }
-    let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 1)
-    bytes.withUnsafeBytes { source in
-        if let baseAddress = source.baseAddress {
-            pointer.copyMemory(from: baseAddress, byteCount: bytes.count)
-        }
-    }
+    let pointer = copyToWasmBuffer(bytes)
     firebaseConfigPointer = pointer
     return UnsafePointer(pointer.assumingMemoryBound(to: UInt8.self))
 }

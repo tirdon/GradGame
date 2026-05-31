@@ -18,8 +18,9 @@
 /// to float32's range: a magnitude whose decimal exponent exceeds 38 is rejected
 /// with `ExpressionParserError.numberTooLarge` (so `simplify` is throwing), and a
 /// magnitude below 10^-39 underflows to exact zero (smaller than float32's smallest
-/// normalized positive value, ~1.18e-38). Division by a literal zero yields `±∞` for
-/// a non-zero numerator and throws `.notANumber` for the indeterminate `0 / 0`.
+/// normalized positive value, ~1.18e-38). Division by a literal zero throws:
+/// `.divisionByZero` for a non-zero numerator and `.notANumber` for the
+/// indeterminate `0 / 0`.
 struct Simplifier {
     /// Largest decimal exponent a folded magnitude may have (float32's ~3.4e38
     /// range); a value above this is rejected as too large.
@@ -142,12 +143,14 @@ struct Simplifier {
 
         switch op {
         case .divide:
-            // Division by a literal zero: `0 / 0` is the indeterminate form (an
-            // error), and `c / 0` is signed infinity. Checked before `0 / e -> 0`
-            // so `0 / 0` does not collapse to 0.
+            // Division by a literal zero always throws: `0 / 0` is the indeterminate
+            // form, and `c / 0` is infinite. Both are surfaced as errors rather than
+            // an internal infinity value — that value used to be swallowed by the
+            // `0 * e -> 0` product rule, so `1 / 0 * 0` wrongly folded to 0. Checked
+            // before `0 / e -> 0` so `0 / 0` does not collapse to 0.
             if isZeroLiteral(rhs) {
                 if isZeroLiteral(lhs) { throw ExpressionParserError.notANumber }
-                return signedInfinity(lhs)
+                throw ExpressionParserError.divisionByZero
             }
             if isZeroLiteral(lhs) { return .number("0") } // 0 / e -> 0
             if isOneLiteral(rhs) { return lhs } // e / 1 -> e
@@ -603,7 +606,7 @@ struct Simplifier {
         var index = 0
         while index < terms.count {
             guard let value = terms[index].coefficient.numerator.magnitude.smallInteger else { return 1 }
-            result = gcd(result, value)
+            result = integerGCD(result, value)
             index += 1
         }
         return result == 0 ? 1 : result
@@ -726,19 +729,6 @@ struct Simplifier {
         return result
     }
 
-    /// Euclid's algorithm on non-negative integers (only `%`, never a widening
-    /// multiply, so it cannot overflow on wasm32).
-    private func gcd(_ a: Int, _ b: Int) -> Int {
-        var x = a < 0 ? -a : a
-        var y = b < 0 ? -b : b
-        while y != 0 {
-            let remainder = x % y
-            x = y
-            y = remainder
-        }
-        return x
-    }
-
     // MARK: Numeric helpers
 
     /// The exact `Rational` of an expression built only from numeric literals and
@@ -857,16 +847,6 @@ struct Simplifier {
     private func foldDivision(_ lhs: Expression, _ rhs: Expression) -> Expression? {
         guard let left = doubleValue(lhs), let right = doubleValue(rhs), right != 0 else { return nil }
         return integerExpression(left / right)
-    }
-
-    /// `c / 0` as signed infinity: `-∞` for a negative numeric numerator, `∞`
-    /// otherwise (a positive or symbolic numerator). `infinity` is an internal
-    /// `.constant` the parser never emits; it renders as `\infty` / `Infinity`.
-    private func signedInfinity(_ numerator: Expression) -> Expression {
-        if let value = doubleValue(numerator), value < 0 {
-            return .unary(.minus, .constant("infinity"))
-        }
-        return .constant("infinity")
     }
 
     /// Folds `base^exponent` for a numeric base and a non-negative integer exponent

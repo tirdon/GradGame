@@ -1,6 +1,5 @@
 (async () => {
     const wasmPath = 'GradGame.wasm';
-    const result = document.getElementById('wasm-add-result');
     const expressionInput = document.getElementById('expr-input');
     const texResult = document.getElementById('tex-parser-result');
     const jsResult = document.getElementById('js-parser-result');
@@ -366,11 +365,7 @@
         window.gradGameConfig = readFirebaseConfig;
         resolveReady();
 
-        const value = wasmExports.add(2, 3);
-        if (result) {
-            result.textContent = `Swift add(2, 3) = ${value}`;
-            result.dataset.status = value === 5 ? 'pass' : 'fail';
-        }
+        wasmExports.add(2, 3); // startup FFI smoke test: a poisoned instance traps here
 
         expressionInput?.addEventListener('input', scheduleRender);
         expressionInput?.addEventListener('keydown', (event) => {
@@ -383,10 +378,6 @@
         evalY?.addEventListener('input', scheduleRender);
         renderExpression();
     } catch (error) {
-        if (result) {
-            result.textContent = `Swift Wasm test failed: ${error.message}`;
-            result.dataset.status = 'fail';
-        }
         if (texResult) {
             setTexOutput('Parser unavailable.', 'fail', false);
         }

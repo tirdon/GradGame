@@ -207,8 +207,6 @@
 
         device = await adapter.requestDevice();
 
-        window.webgpuGraphActive = true;
-
         context = canvas.getContext('webgpu');
         format  = navigator.gpu.getPreferredCanvasFormat();
         context.configure({ device, format, alphaMode: 'premultiplied' });
@@ -846,10 +844,12 @@
         const input = document.getElementById('expr-input');
         if (!input) return;
 
+        // The JS result element is stable; query it once and reuse it in both the
+        // poll and the observer rather than re-querying on every input event.
+        const jsResultEl = document.getElementById('js-parser-result');
+
         const poll = () => {
-            const jsResultEl = document.getElementById('js-parser-result');
-            const jsExpr = jsResultEl?.dataset?.js ?? null;
-            setExpression(jsExpr);
+            setExpression(jsResultEl?.dataset?.js ?? null);
         };
 
         input.addEventListener('input', () => {
@@ -862,7 +862,6 @@
 
         // Also observe changes via MutationObserver on the JS result element
         const observer = new MutationObserver(poll);
-        const jsResultEl = document.getElementById('js-parser-result');
         if (jsResultEl) {
             observer.observe(jsResultEl, { attributes: true, attributeFilter: ['data-js'] });
         }
@@ -970,7 +969,6 @@
        it before the async WebGPU init resolves (rendering starts once ready). */
     function enterGameMode() {
         gameMode = true;
-        window.webgpuGraphActive = true;
         _overlay.style.display   = 'none';   // ±10 coordinate-space slider
         _cPill.style.display     = 'none';   // f = 0 contour slider
         fieldCanvas.style.display = 'none';  // scalar-field overlay

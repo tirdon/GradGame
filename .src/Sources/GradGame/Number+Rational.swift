@@ -1,3 +1,17 @@
+/// Euclid's algorithm on the magnitudes of two integers, returning their greatest
+/// common divisor (`gcd(0, 0)` is 0). Uses only `%` and assignment — never a
+/// widening multiply — so it cannot overflow on wasm32.
+func integerGCD(_ a: Int, _ b: Int) -> Int {
+    var x = a < 0 ? -a : a
+    var y = b < 0 ? -b : b
+    while y != 0 {
+        let remainder = x % y
+        x = y
+        y = remainder
+    }
+    return x
+}
+
 /// An exact rational coefficient — `numerator / denominator`, both `DecimalValue` —
 /// used by the `Simplifier` so that division folds the way a computer algebra
 /// system does: `2/3 · 4/5 -> 8/15`, `6/4 -> 3/2`, `4x/2 -> 2x`. The sign always
@@ -110,16 +124,11 @@ struct Rational {
         return result
     }
 
-    /// Euclid's algorithm on small non-negative integers (no overflow risk: only
-    /// `%` and assignment, never a widening multiply).
+    /// Divisor used to reduce a fraction to lowest terms: the gcd of numerator and
+    /// denominator, falling back to 1 for the degenerate all-zero case so a divide
+    /// is always safe.
     private static func gcd(_ a: Int, _ b: Int) -> Int {
-        var x = a < 0 ? -a : a
-        var y = b < 0 ? -b : b
-        while y != 0 {
-            let remainder = x % y
-            x = y
-            y = remainder
-        }
-        return x == 0 ? 1 : x
+        let divisor = integerGCD(a, b)
+        return divisor == 0 ? 1 : divisor
     }
 }

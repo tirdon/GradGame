@@ -3,15 +3,9 @@ struct TeXRenderer {
         render(expression, parentPrecedence: 0, position: .none)
     }
 
-    private enum Position {
-        case none
-        case left
-        case right
-    }
-
-    private func render(_ expression: Expression, parentPrecedence: Int, position: Position) -> String {
+    private func render(_ expression: Expression, parentPrecedence: Int, position: RenderPosition) -> String {
         let rendered: String
-        let precedence = self.precedence(of: expression)
+        let precedence = expression.renderPrecedence
 
         switch expression {
         case let .number(value):
@@ -36,7 +30,7 @@ struct TeXRenderer {
             rendered = "\\frac{\\partial}{\\partial \(variable)}\\left(\(render(argument, parentPrecedence: 0, position: .none))\\right)"
         }
 
-        if shouldWrap(expression, precedence: precedence, parentPrecedence: parentPrecedence, position: position) {
+        if expression.needsParentheses(precedence: precedence, parentPrecedence: parentPrecedence, position: position) {
             return "\\left(\(rendered)\\right)"
         }
 
@@ -44,7 +38,7 @@ struct TeXRenderer {
     }
 
     private func renderBinary(_ operation: BinaryOperator, _ lhs: Expression, _ rhs: Expression) -> String {
-        let precedence = precedence(ofBinary: operation)
+        let precedence = operation.precedence
 
         switch operation {
         case .add:
@@ -249,8 +243,6 @@ struct TeXRenderer {
             return "\\varphi"
         case "gamma":
             return "\\gamma"
-        case "infinity":
-            return "\\infty"
         default:
             return name
         }
@@ -279,7 +271,7 @@ struct TeXRenderer {
     private func renderPowerBase(_ expression: Expression) -> String {
         switch expression {
         case .number, .variable, .constant, .function, .derivative:
-            return render(expression, parentPrecedence: precedence(ofBinary: .power), position: .left)
+            return render(expression, parentPrecedence: BinaryOperator.power.precedence, position: .left)
         default:
             return "\\left(\(render(expression, parentPrecedence: 0, position: .none))\\right)"
         }
@@ -309,42 +301,4 @@ struct TeXRenderer {
         }
     }
 
-    private func shouldWrap(_ expression: Expression, precedence: Int, parentPrecedence: Int, position: Position) -> Bool {
-        if precedence < parentPrecedence {
-            return true
-        }
-
-        if position == .right,
-           precedence == parentPrecedence,
-           case let .binary(operation, _, _) = expression {
-            return operation == .subtract || operation == .divide || operation == .power
-        }
-
-        return false
-    }
-
-    private func precedence(of expression: Expression) -> Int {
-        switch expression {
-        case .number, .variable, .constant, .function, .derivative:
-            return 5
-        case .unary:
-            return 3
-        case let .binary(operation, _, _):
-            return precedence(ofBinary: operation)
-        }
-    }
-
-    /// A binary node's precedence depends only on its operator, so callers that
-    /// already hold the operator avoid allocating a throwaway `.binary` node
-    /// (an `indirect` enum, hence heap-boxed) just to read it back.
-    private func precedence(ofBinary operation: BinaryOperator) -> Int {
-        switch operation {
-        case .add, .subtract:
-            return 1
-        case .multiply, .implicitMultiply, .divide:
-            return 2
-        case .power:
-            return 4
-        }
-    }
 }

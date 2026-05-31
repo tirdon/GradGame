@@ -350,12 +350,14 @@ import Testing
 }
 
 @Test func simplifierHandlesDivisionByZero() throws {
-    // A non-zero numerator over a literal zero is signed infinity (an internal
-    // `\infty` constant the parser never emits); 0 / 0 is the indeterminate form.
-    #expect(try parseExpressionToTeX("1 / 0", simplify: true) == "\\infty")
-    #expect(try parseExpressionToTeX("-1 / 0", simplify: true) == "-\\infty")
-    #expect(try parseExpressionToTeX("5 / (x - x)", simplify: true) == "\\infty")  // denominator folds to 0
-    #expect(try parseExpressionToTeX("x / 0", simplify: true) == "\\infty")
+    // A non-zero numerator over a literal zero is infinite and throws, rather than
+    // producing an internal infinity value that a later `0 * e -> 0` would swallow
+    // (`1 / 0 * 0` must not fold to 0). `0 / 0` is the indeterminate form.
+    for infinite in ["1 / 0", "-1 / 0", "5 / (x - x)", "x / 0", "1 / 0 * 0"] {
+        #expect(throws: ExpressionParserError.divisionByZero) {
+            try parseExpressionToTeX(infinite, simplify: true)
+        }
+    }
 
     #expect(throws: ExpressionParserError.notANumber) {
         try parseExpressionToTeX("0 / 0", simplify: true)

@@ -68,6 +68,18 @@ public func gradGameFreeLastResult() {
     lastResultLength = 0
 }
 
+/// Copies `bytes` into a freshly allocated byte-aligned buffer for handing across
+/// the wasm FFI boundary. The caller owns the returned pointer and must free it.
+func copyToWasmBuffer(_ bytes: [UInt8]) -> UnsafeMutableRawPointer {
+    let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 1)
+    bytes.withUnsafeBytes { source in
+        if let baseAddress = source.baseAddress {
+            pointer.copyMemory(from: baseAddress, byteCount: bytes.count)
+        }
+    }
+    return pointer
+}
+
 func storeParserResult(_ value: String, succeeded: Bool) -> UnsafePointer<UInt8>? {
     gradGameFreeLastResult()
 
@@ -79,13 +91,7 @@ func storeParserResult(_ value: String, succeeded: Bool) -> UnsafePointer<UInt8>
         return nil
     }
 
-    let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 1)
-    bytes.withUnsafeBytes { source in
-        if let baseAddress = source.baseAddress {
-            pointer.copyMemory(from: baseAddress, byteCount: bytes.count)
-        }
-    }
-
+    let pointer = copyToWasmBuffer(bytes)
     lastResultPointer = pointer
     return UnsafePointer(pointer.assumingMemoryBound(to: UInt8.self))
 }

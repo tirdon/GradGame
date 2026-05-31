@@ -28,7 +28,6 @@ import {
 // The GradGame engine (expression evaluator, trajectory sim, placement, turn
 // logic) now lives entirely in GradGame.wasm, reached through window.gradGameEngine
 // (set up by gradgame-wasm.js). Only these UI/battlefield constants stay in JS.
-const WORLD = { xMin: -12, xMax: 12, yMin: -6.75, yMax: 6.75 };
 const CANNON_RADIUS = 0.55;
 const TURN_SECONDS = 30;
 const PLAYER_COLORS = [
