@@ -1,5 +1,5 @@
 /**
- * gradgame-game.js — 4-player Graph War controller (browser glue).
+ * gradgame-game.js — 4-player GradGame controller (browser glue).
  * ──────────────────────────────────────────────────────────────────────────
  * Calls the wasm engine (window.gradGameEngine, from gradgame-wasm.js), syncs the
  * shared match over Firebase Realtime Database, and feeds the WGSL battlefield
@@ -25,7 +25,7 @@ import {
     runTransaction, onDisconnect, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/12.14.0/firebase-database.js';
 
-// The Graph War engine (expression evaluator, trajectory sim, placement, turn
+// The GradGame engine (expression evaluator, trajectory sim, placement, turn
 // logic) now lives entirely in GradGame.wasm, reached through window.gradGameEngine
 // (set up by gradgame-wasm.js). Only these UI/battlefield constants stay in JS.
 const WORLD = { xMin: -12, xMax: 12, yMin: -6.75, yMax: 6.75 };
@@ -62,10 +62,10 @@ export function start({ db, uid }) {
 
     /* ── Renderer hand-off ─────────────────────────────────────────────── */
     if (window.Battlefield) window.Battlefield.enterGameMode();
-    console.log('[GraphWar] start: uid=', uid, 'seat-token=', token.slice(0, 8));
+    console.log('[GradGame] start: uid=', uid, 'seat-token=', token.slice(0, 8));
     setTimeout(() => {
         const ready = !!(window.Battlefield && window.Battlefield.ready);
-        console.log('[GraphWar] WebGPU renderer ready =', ready,
+        console.log('[GradGame] WebGPU renderer ready =', ready,
             ready ? '' : '(blank board → check for a "WebGPU graph init failed" error above)');
     }, 1800);
 
@@ -93,7 +93,7 @@ export function start({ db, uid }) {
     const timerEl  = $('game-timer');
     const readyBtn = $('game-ready');
     const toastEl  = $('game-toast');
-    const inputEl  = $('session-load');
+    const inputEl  = $('expr-input');
 
     chips.forEach((chip, seat) => {
         if (!chip) return;
@@ -254,14 +254,14 @@ export function start({ db, uid }) {
             turnSeconds: TURN_SECONDS,
             turnStartedAt: serverTimestamp(),
         };
-        console.log('[GraphWar] starting match: seats', occ, 'positions', positions);
+        console.log('[GradGame] starting match: seats', occ, 'positions', positions);
         update(gRef(), updates)
             .then(() => {
-                console.log('[GraphWar] start write OK');
+                console.log('[GradGame] start write OK');
                 clearSharedHistory();
             })
             .catch((err) => {
-                console.error('[GraphWar] start write FAILED (re-paste database.rules.json — a client must be able to write other seats):', err);
+                console.error('[GradGame] start write FAILED (re-paste database.rules.json — a client must be able to write other seats):', err);
                 toast('Start blocked — update database rules');
             });
     }
@@ -271,7 +271,7 @@ export function start({ db, uid }) {
        ════════════════════════════════════════════════════════════════════ */
     function fire() {
         if (!canFire()) {
-            console.log('[GraphWar] fire blocked:', {
+            console.log('[GradGame] fire blocked:', {
                 hasState: !!state, status: state && state.meta.status,
                 mySeat, turnIndex: state && state.meta.turnIndex,
                 alive: state && mySeat >= 0 && state.players[mySeat] && state.players[mySeat].alive,
@@ -287,7 +287,7 @@ export function start({ db, uid }) {
             expr, originX: me.x, originY: me.y, dir,
             shooterSeat: mySeat, cannons, obstacles: state.obstacles,
         });
-        if (!sim) { toast('Type a valid function first'); console.log('[GraphWar] invalid function for fire:', expr); return; }
+        if (!sim) { toast('Type a valid function first'); console.log('[GradGame] invalid function for fire:', expr); return; }
 
         const seq = (state.shot && state.shot.seq ? state.shot.seq : 0) + 1;
         const shot = {
@@ -336,13 +336,13 @@ export function start({ db, uid }) {
         }
         updates.meta = meta;
 
-        console.log('[GraphWar] firing shot:', { outcome: sim.outcome, hitSeat: sim.hitSeat, pathLen: sim.path.length, nextTurn: meta.turnIndex });
+        console.log('[GradGame] firing shot:', { outcome: sim.outcome, hitSeat: sim.hitSeat, pathLen: sim.path.length, nextTurn: meta.turnIndex });
         update(gRef(), updates)
             .then(() => {
-                console.log('[GraphWar] shot write OK');
+                console.log('[GradGame] shot write OK');
                 writeHistoryEntry(historyEntry);
             })
-            .catch((err) => { console.error('[GraphWar] shot write FAILED (check RTDB rules):', err); toast('Write blocked — check database rules'); });
+            .catch((err) => { console.error('[GradGame] shot write FAILED (check RTDB rules):', err); toast('Write blocked — check database rules'); });
         inputEl.value = '';
         aimPoints = null;
     }
@@ -433,7 +433,7 @@ export function start({ db, uid }) {
                 clearSharedHistory();
             })
             .catch((err) => {
-                console.error('[GraphWar] empty lobby reset failed', err);
+                console.error('[GradGame] empty lobby reset failed', err);
             })
             .finally(() => {
                 emptyResetPending = false;
@@ -537,13 +537,13 @@ export function start({ db, uid }) {
             ...entry,
             ts: serverTimestamp(),
         }).catch((err) => {
-            console.warn('[GraphWar] history write skipped (update database.rules.json for shared history):', err);
+            console.warn('[GradGame] history write skipped (update database.rules.json for shared history):', err);
         });
     }
 
     function clearSharedHistory() {
         remove(gRef('history')).catch((err) => {
-            console.warn('[GraphWar] history clear skipped:', err);
+            console.warn('[GradGame] history clear skipped:', err);
         });
     }
 
@@ -775,7 +775,7 @@ export function start({ db, uid }) {
                 const r = window.gradGameParse.toTeX(input);
                 return r && r.ok ? { ok: true, text: r.text } : { ok: false, text: '' };
             } catch (e) {
-                console.error('[GraphWar] TeX parse failed', e);
+                console.error('[GradGame] TeX parse failed', e);
             }
         }
         return { ok: false, text: '' };

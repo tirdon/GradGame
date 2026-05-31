@@ -154,7 +154,7 @@
         /* Click an example to populate input */
         body.querySelectorAll('.help-example-row[data-input]').forEach((row) => {
             row.addEventListener('click', () => {
-                const input = document.getElementById('session-load');
+                const input = document.getElementById('expr-input');
                 if (input) {
                     input.value = row.dataset.input;
                     input.dispatchEvent(new Event('input'));

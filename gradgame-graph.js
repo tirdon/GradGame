@@ -23,7 +23,7 @@
     const CURVE_THICKNESS = 2.5;           // half-width in CSS px
     const WGSL_PATH      = 'graph.wgsl';
 
-    /* Graph War battlefield extents (must match BunServer/constants.ts WORLD). */
+    /* GradGame battlefield extents (must match BunServer/constants.ts WORLD). */
     const WORLD          = { xMin: -12, xMax: 12, yMin: -6.75, yMax: 6.75 };
     const VIEW_MARGIN    = 1.08;           // show a little past the world edges
     const CAP_ENTITIES   = 128;            // max instanced discs per frame
@@ -54,7 +54,7 @@
     let uniformBuffer, sampleBuffer, flagsBuffer;
     let gridBindGroup, curveBindGroup, computeFlagsBindGroup;
 
-    /* ── Graph War battlefield state ────────────────────────────────────────
+    /* ── GradGame battlefield state ────────────────────────────────────────
        When the game takes over (Battlefield.enterGameMode), the renderer stops
        sampling the expression curve / scalar field and instead draws the scene
        pushed each frame via Battlefield.setScene: instanced discs (entities) +
@@ -248,7 +248,7 @@
             usage: GPUBufferUsage.STORAGE,
         });
 
-        // Graph War: instanced disc entities (32 B each) + concatenated polyline verts (32 B each)
+        // GradGame: instanced disc entities (32 B each) + concatenated polyline verts (32 B each)
         entityBuffer = device.createBuffer({
             size: CAP_ENTITIES * 8 * 4,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -358,7 +358,7 @@
             ],
         });
 
-        /* ── Graph War: entity (instanced discs) + path (thick polylines) ──
+        /* ── GradGame: entity (instanced discs) + path (thick polylines) ──
            Both reuse the shared uniform (binding 0) plus one storage buffer
            each (bindings 3 / 4), all in group 0. */
         const entityLayout = device.createBindGroupLayout({
@@ -843,7 +843,7 @@
         // Watch the expression input. Re-parse on every input event.
         // The Wasm module (gradgame-wasm.js) stores parsed JS in a data
         // attribute; we read it after a short delay.
-        const input = document.getElementById('session-load');
+        const input = document.getElementById('expr-input');
         if (!input) return;
 
         const poll = () => {
@@ -963,7 +963,7 @@
     /* ── Resize observer ────────────────────────────────────────────────── */
     new ResizeObserver(() => resizeCanvas()).observe(host);
 
-    /* ── Graph War battlefield API ──────────────────────────────────────────
+    /* ── GradGame battlefield API ──────────────────────────────────────────
        gradgame-game.js drives the board through this. enterGameMode swaps the
        grapher chrome out for a fixed WORLD view; setScene pushes the per-frame
        entities + polylines. Defined synchronously so the game module can call

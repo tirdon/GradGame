@@ -6,7 +6,7 @@
     const toggle = document.getElementById('history-toggle');
     const list = document.getElementById('history-list');
     const clearButton = document.getElementById('history-clear');
-    const inputField = document.getElementById('session-load');
+    const inputField = document.getElementById('expr-input');
 
     if (!dock || !toggle || !list) {
         return;

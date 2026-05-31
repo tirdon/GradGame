@@ -499,8 +499,8 @@ private func sim(_ input: String, obstacles: [Obstacle]) throws -> ShotResult {
     var i = 0
     while i < 4 {
         let x = a[i * 2], y = a[i * 2 + 1]
-        #expect(x >= GraphWorld.xMin + 1.5 && x <= GraphWorld.xMax - 1.5)
-        #expect(y >= GraphWorld.yMin + 1.2 && y <= GraphWorld.yMax - 1.2)
+        #expect(x >= GradGameWorld.xMin + 1.5 && x <= GradGameWorld.xMax - 1.5)
+        #expect(y >= GradGameWorld.yMin + 1.2 && y <= GradGameWorld.yMax - 1.2)
         i += 1
     }
     // Pairwise separation holds (field is large enough for 4 with guard < 400).

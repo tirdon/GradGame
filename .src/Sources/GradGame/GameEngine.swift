@@ -1,6 +1,6 @@
 // GameEngine.swift
 // ──────────────────────────────────────────────────────────────────────────
-// Swift port of the pure Graph War engine that used to live in
+// Swift port of the pure GradGame engine that used to live in
 // `gradgame-engine.js` (itself a port of BunServer's `systems.ts`/`game.ts`).
 // No DOM / Firebase / FFI here — just math over the AST, so it is unit-testable
 // on the host and re-used by the wasm exports in GradGame.swift.
@@ -12,7 +12,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Battlefield tunables (port of BunServer/constants.ts, mirrored in gradgame-graph.js).
-enum GraphWorld {
+enum GradGameWorld {
     static let xMin = -12.0
     static let xMax = 12.0
     static let yMin = -6.75
@@ -57,7 +57,7 @@ func round3(_ v: Double) -> Double {
 
 @inline(__always)
 private func sweepLimit() -> Int {
-    Int(((GraphWorld.xMax - GraphWorld.xMin) / kStep).rounded(.up)) + 4
+    Int(((GradGameWorld.xMax - GradGameWorld.xMin) / kStep).rounded(.up)) + 4
 }
 
 /// Sweep `y = originY + f(x − originX)` from the cannon in `dir` until the first
@@ -83,7 +83,7 @@ func simulateShot(
 
     var i = 0
     while i < limit {
-        if (dir > 0 && x > GraphWorld.xMax) || (dir < 0 && x < GraphWorld.xMin) {
+        if (dir > 0 && x > GradGameWorld.xMax) || (dir < 0 && x < GradGameWorld.xMin) {
             outcome = 0 // out
             break
         }
@@ -159,7 +159,7 @@ func resampleArc(
     var x = originX
     var i = 0
     while i < limit {
-        if (dir > 0 && x > GraphWorld.xMax) || (dir < 0 && x < GraphWorld.xMin) { break }
+        if (dir > 0 && x > GradGameWorld.xMax) || (dir < 0 && x < GradGameWorld.xMin) { break }
         let wy = originY + (expression.evaluate(x: x - originX, y: 0) - offset)
         if wy.isFinite && (wy < 0 ? -wy : wy) < kMaxAbsY {
             path.append(round3(x))
@@ -254,8 +254,8 @@ func placePlayers(occupiedSeats: [Int], seed: Int) -> [Double] {
         var py = 0.0
         var guardCount = 0
         while true {
-            px = rand(&rng, GraphWorld.xMin + 1.5, GraphWorld.xMax - 1.5)
-            py = rand(&rng, GraphWorld.yMin + 1.2, GraphWorld.yMax - 1.2)
+            px = rand(&rng, GradGameWorld.xMin + 1.5, GradGameWorld.xMax - 1.5)
+            py = rand(&rng, GradGameWorld.yMin + 1.2, GradGameWorld.yMax - 1.2)
             guardCount += 1
             var tooClose = false
             var k = 0
@@ -301,7 +301,7 @@ func generateObstacles(positions: [Double], seed: Int) -> [Double] {
     while placedX.count < count && guardCount < 400 {
         guardCount += 1
         let ox = rand(&rng, -5.5, 5.5)
-        let oy = rand(&rng, GraphWorld.yMin + 1, GraphWorld.yMax - 1)
+        let oy = rand(&rng, GradGameWorld.yMin + 1, GradGameWorld.yMax - 1)
         let orr = rand(&rng, 0.55, 1.35)
 
         var nearPlayer = false

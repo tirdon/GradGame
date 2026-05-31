@@ -275,7 +275,7 @@ fn isFinite(v : f32) -> bool {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   GRAPH WAR — battlefield geometry rendered entirely on the GPU
+   GRADGAME — battlefield geometry rendered entirely on the GPU
    ═══════════════════════════════════════════════════════════════════════════
    Two extra pipelines turn the function-grapher canvas into a game board:
 

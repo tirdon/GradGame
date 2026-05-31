@@ -62,9 +62,9 @@
             </div>
         </header>
 
-        <main class="game-shell" id="session-new" aria-label="GradGame session">
-            <section class="canvas-frame" aria-label="Graph War battlefield">
-                <canvas id="canvas-new"></canvas>
+        <main class="game-shell" id="game-shell" aria-label="GradGame session">
+            <section class="canvas-frame" aria-label="GradGame battlefield">
+                <canvas id="battlefield-canvas"></canvas>
                 <div id="game-toast" class="game-toast" role="status" aria-live="polite"></div>
             </section>
 
@@ -80,7 +80,7 @@
                     <button id="game-ready" class="game-ready" type="button" hidden>Ready</button>
                 </div>
 
-                <input id="session-load" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false" aria-label="Expression input">
+                <input id="expr-input" type="text" placeholder="sin x y + x ^ 2 + 3" autocomplete="off" spellcheck="false" aria-label="Expression input">
             </section>
 
         </main>

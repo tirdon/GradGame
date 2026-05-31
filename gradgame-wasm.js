@@ -1,7 +1,7 @@
 (async () => {
     const wasmPath = 'GradGame.wasm';
     const result = document.getElementById('wasm-add-result');
-    const expressionInput = document.getElementById('session-load');
+    const expressionInput = document.getElementById('expr-input');
     const texResult = document.getElementById('tex-parser-result');
     const jsResult = document.getElementById('js-parser-result');
     const evalX = document.getElementById('eval-x');
@@ -21,10 +21,10 @@
     window.gradGameReady = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
 
     // Captures the latest result the Swift engine pushes back through the
-    // `graphEmitResult` host callback (see GradGame.swift). The path pointer is only
+    // `gradGameEmitResult` host callback (see GradGame.swift). The path pointer is only
     // valid during the call, so the bytes are copied out synchronously here.
     let lastEmit = null;
-    function graphEmitResult(outcome, hitSeat, impactX, impactY, pathPtr, pathCount) {
+    function gradGameEmitResult(outcome, hitSeat, impactX, impactY, pathPtr, pathCount) {
         const path = (pathPtr && pathCount > 0)
             ? Array.from(new Float64Array(wasmExports.memory.buffer, pathPtr, pathCount))
             : [];
@@ -281,7 +281,7 @@
     }
 
     async function instantiate() {
-        const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1, gradgame: { graphEmitResult } };
+        const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1, gradgame: { gradGameEmitResult } };
         const instance = await WebAssembly.instantiate(wasmModule, imports);
         wasmExports = instance.exports;
         window.gradGameWasm = wasmExports;
@@ -344,7 +344,7 @@
             throw new Error(`HTTP ${response.status}`);
         }
 
-        const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1, gradgame: { graphEmitResult } };
+        const imports = { wasi_snapshot_preview1: wasiSnapshotPreview1, gradgame: { gradGameEmitResult } };
         const responseCopy = response.clone();
         const { module, instance } = await WebAssembly.instantiateStreaming(response, imports).catch(
             async () => WebAssembly.instantiate(await responseCopy.arrayBuffer(), imports)
@@ -397,10 +397,10 @@
     }
 
     /* ════════════════════════════════════════════════════════════════════════
-       Graph War engine API — marshals JS ⇄ wasm for gradgame-game.js. The engine
+       GradGame engine API — marshals JS ⇄ wasm for gradgame-game.js. The engine
        (evaluator, trajectory sim, placement, turn logic) now lives entirely in
        GradGame.wasm; these wrappers feed inputs through 8-aligned f64 buffers and
-       receive array results via the graphEmitResult callback (→ `lastEmit`). Each
+       receive array results via the gradGameEmitResult callback (→ `lastEmit`). Each
        wrapper reads the live `wasmExports` (surviving trap recovery) and, on a
        trap, recovers the instance and returns a benign value so the UI never hangs.
        ════════════════════════════════════════════════════════════════════════ */
@@ -419,11 +419,11 @@
     function freeBytes(buf) { if (buf.ptr) wasmExports.gradGameDeallocate(buf.ptr, buf.len); }
     function allocF64(arr) {
         if (!arr.length) return 0;
-        const ptr = wasmExports.graphAllocF64(arr.length);
+        const ptr = wasmExports.gradGameAllocF64(arr.length);
         new Float64Array(wasmExports.memory.buffer, ptr, arr.length).set(arr);
         return ptr;
     }
-    function freeF64(ptr, count) { if (ptr) wasmExports.graphFreeF64(ptr, count); }
+    function freeF64(ptr, count) { if (ptr) wasmExports.gradGameFreeF64(ptr, count); }
     function cannonsFlat(cannons) {
         const out = [];
         for (let i = 0; i < 4; i++) {
@@ -463,7 +463,7 @@
                 const cp = allocF64(cflat), op = allocF64(oflat);
                 lastEmit = null;
                 try {
-                    const code = wasmExports.graphSimulateShot(e.ptr, e.len, originX, originY, dir, shooterSeat, cp, 4, op, obs.length);
+                    const code = wasmExports.gradGameSimulateShot(e.ptr, e.len, originX, originY, dir, shooterSeat, cp, 4, op, obs.length);
                     if (code < 0) return null;
                     const em = lastEmit || {};
                     return {
@@ -484,7 +484,7 @@
                 const e = allocBytes(expr);
                 lastEmit = null;
                 try {
-                    const n = wasmExports.graphResampleArc(e.ptr, e.len, originX, originY, dir, endX == null ? 0 : endX, endX == null ? 0 : 1);
+                    const n = wasmExports.gradGameResampleArc(e.ptr, e.len, originX, originY, dir, endX == null ? 0 : endX, endX == null ? 0 : 1);
                     if (n < 0) return null;
                     return toPairs((lastEmit || {}).path || []);
                 } catch (err) {
@@ -498,7 +498,7 @@
                 if (!wasmExports) return 1;
                 const cflat = cannonsFlat(cannons);
                 const cp = allocF64(cflat);
-                try { return wasmExports.graphAimDirection(origin.x, origin.y, shooterSeat, cp, 4) || 1; }
+                try { return wasmExports.gradGameAimDirection(origin.x, origin.y, shooterSeat, cp, 4) || 1; }
                 catch (err) { recoverWasm(); return 1; }
                 finally { freeF64(cp, cflat.length); }
             },
@@ -510,7 +510,7 @@
                 for (const s of occupiedSeats) mask |= 1 << s;
                 lastEmit = null;
                 try {
-                    wasmExports.graphPlacePlayers(mask, randomSeed());
+                    wasmExports.gradGamePlacePlayers(mask, randomSeed());
                     const flat = (lastEmit || {}).path || [];
                     const positions = [null, null, null, null];
                     for (let s = 0; s < 4; s++) {
@@ -528,7 +528,7 @@
                 const pp = allocF64(flat);
                 lastEmit = null;
                 try {
-                    const count = wasmExports.graphGenerateObstacles(pp, randomSeed());
+                    const count = wasmExports.gradGameGenerateObstacles(pp, randomSeed());
                     const out = (lastEmit || {}).path || [];
                     const obstacles = [];
                     for (let i = 0; i < count; i++) obstacles.push({ x: out[i * 3], y: out[i * 3 + 1], r: out[i * 3 + 2] });
@@ -539,12 +539,12 @@
             // players seat-indexed [{alive}|null]; mirrors the old engine signatures.
             nextAliveSeat(players, fromSeat) {
                 if (!wasmExports) return -1;
-                try { return wasmExports.graphNextAliveSeat(maskOf(players), fromSeat); }
+                try { return wasmExports.gradGameNextAliveSeat(maskOf(players), fromSeat); }
                 catch (err) { recoverWasm(); return -1; }
             },
             aliveCount(players) {
                 if (!wasmExports) return 0;
-                try { return wasmExports.graphAliveCount(maskOf(players)); }
+                try { return wasmExports.gradGameAliveCount(maskOf(players)); }
                 catch (err) { recoverWasm(); return 0; }
             },
         };
