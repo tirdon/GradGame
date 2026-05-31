@@ -52,28 +52,32 @@ private func parseExprArgument(_ pointer: UnsafePointer<UInt8>?, _ length: Int32
     return try? parseAndResolveExpression(input)
 }
 
-private func readCannons(_ pointer: UnsafePointer<Double>?, _ count: Int32) -> [Cannon] {
-    var out: [Cannon] = []
-    guard count > 0, let pointer else { return out }
+/// Populate the cannon archetype from the flat f64 buffer (3 f64/cannon, seat order;
+/// 3rd f64 = alive flag). Spawning in order keeps column index == seat index, which
+/// the engine relies on (shooterSeat / hitSeat are seat indices).
+private func populateCannons(_ world: inout World, _ pointer: UnsafePointer<Double>?, _ count: Int32) {
+    guard count > 0, let pointer else { return }
     let buffer = UnsafeBufferPointer(start: pointer, count: Int(count) * 3)
     var i = 0
     while i < Int(count) {
-        out.append(Cannon(x: buffer[i * 3], y: buffer[i * 3 + 1], alive: buffer[i * 3 + 2] != 0))
+        world.spawnCannon(
+            seat: i,
+            x: buffer[i * 3], y: buffer[i * 3 + 1],
+            alive: buffer[i * 3 + 2] != 0
+        )
         i += 1
     }
-    return out
 }
 
-private func readObstacles(_ pointer: UnsafePointer<Double>?, _ count: Int32) -> [Obstacle] {
-    var out: [Obstacle] = []
-    guard count > 0, let pointer else { return out }
+/// Populate the obstacle archetype from the flat f64 buffer (3 f64/obstacle: x,y,r).
+private func populateObstacles(_ world: inout World, _ pointer: UnsafePointer<Double>?, _ count: Int32) {
+    guard count > 0, let pointer else { return }
     let buffer = UnsafeBufferPointer(start: pointer, count: Int(count) * 3)
     var i = 0
     while i < Int(count) {
-        out.append(Obstacle(x: buffer[i * 3], y: buffer[i * 3 + 1], r: buffer[i * 3 + 2]))
+        world.spawnObstacle(x: buffer[i * 3], y: buffer[i * 3 + 1], radius: buffer[i * 3 + 2])
         i += 1
     }
-    return out
 }
 
 /// Simulate a shot. Returns the outcome (0=out, 1=hit, 2=blocked), or -1 if the
@@ -91,25 +95,28 @@ public func gradGameSimulateShot(
         gradGameEmitResult(-1, -1, .nan, .nan, nil, 0)
         return -1
     }
-    let cannons = readCannons(cannonsPointer, cannonCount)
-    let obstacles = readObstacles(obstaclesPointer, obstacleCount)
-    guard let result = simulateShot(
-        expression: expression,
+    var world = World()
+    populateCannons(&world, cannonsPointer, cannonCount)
+    populateObstacles(&world, obstaclesPointer, obstacleCount)
+    guard let shot = collisionSystem(
+        &world, expression: expression,
         originX: originX, originY: originY, dir: dir,
-        shooterSeat: Int(shooterSeat), cannons: cannons, obstacles: obstacles
+        shooterSeat: Int(shooterSeat)
     ) else {
         gradGameEmitResult(-1, -1, .nan, .nan, nil, 0)
         return -1
     }
 
-    result.path.withUnsafeBufferPointer { buffer in
+    let outcome = world.outcome(of: shot)
+    let impact = world.impact(of: shot)
+    world.trajectory(of: shot).points.withUnsafeBufferPointer { buffer in
         gradGameEmitResult(
-            Int32(result.outcome), Int32(result.hitSeat),
-            result.impactX, result.impactY,
+            Int32(outcome.value), Int32(impact.seat),
+            impact.x, impact.y,
             buffer.baseAddress, Int32(buffer.count)
         )
     }
-    return Int32(result.outcome)
+    return Int32(outcome.value)
 }
 
 /// Rebuild a shot's polyline. Returns the point count (path has 2·points f64),
@@ -126,14 +133,16 @@ public func gradGameResampleArc(
         gradGameEmitResult(-1, -1, .nan, .nan, nil, 0)
         return -1
     }
-    guard let path = resampleArc(
-        expression: expression,
+    var world = World()
+    guard let shot = resampleSystem(
+        &world, expression: expression,
         originX: originX, originY: originY, dir: dir,
         endX: hasEndX != 0 ? endX : nil
     ) else {
         gradGameEmitResult(-1, -1, .nan, .nan, nil, 0)
         return -1
     }
+    let path = world.trajectory(of: shot).points
     emitDoubles(path)
     return Int32(path.count / 2)
 }
@@ -144,8 +153,9 @@ public func gradGameAimDirection(
     _ originX: Double, _ originY: Double, _ shooterSeat: Int32,
     _ cannonsPointer: UnsafePointer<Double>?, _ cannonCount: Int32
 ) -> Int32 {
-    let cannons = readCannons(cannonsPointer, cannonCount)
-    return Int32(aimDirection(originX: originX, originY: originY, shooterSeat: Int(shooterSeat), cannons: cannons))
+    var world = World()
+    populateCannons(&world, cannonsPointer, cannonCount)
+    return Int32(aimSystem(world, originX: originX, originY: originY, shooterSeat: Int(shooterSeat)))
 }
 
 /// `occMask` bit j set ⇔ seat j is occupied. Emits 8 f64 (x,y per seat; NaN for

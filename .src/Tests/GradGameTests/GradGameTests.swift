@@ -447,40 +447,62 @@ private func approx(_ a: Double, _ b: Double, _ tol: Double = 1e-9) -> Bool {
     #expect(approx(try evalInput("dx (2^x)", x: 0), 0.6931471805599453, 1e-4))
 }
 
-// MARK: - Trajectory engine (GameEngine.swift)
+// MARK: - Trajectory engine (ECS: World + systems)
 
-private let testCannons: [Cannon] = [
-    Cannon(x: -8, y: 0, alive: true),
-    Cannon(x: 8, y: 0, alive: true),
-    Cannon(x: 0, y: 0, alive: false),
-    Cannon(x: 0, y: 0, alive: false),
-]
+/// Builds the 4-seat test board as a World (seats 0,1 alive; 2,3 dead at origin).
+/// Cannons spawn in seat order ⇒ column index == seat index.
+private func makeTestWorld(obstacles: [(x: Double, y: Double, r: Double)] = []) -> World {
+    var world = World()
+    world.spawnCannon(seat: 0, x: -8, y: 0, alive: true)
+    world.spawnCannon(seat: 1, x: 8, y: 0, alive: true)
+    world.spawnCannon(seat: 2, x: 0, y: 0, alive: false)
+    world.spawnCannon(seat: 3, x: 0, y: 0, alive: false)
+    var i = 0
+    while i < obstacles.count {
+        let o = obstacles[i]
+        world.spawnObstacle(x: o.x, y: o.y, radius: o.r)
+        i += 1
+    }
+    return world
+}
 
-private func sim(_ input: String, obstacles: [Obstacle]) throws -> ShotResult {
+/// Runs collisionSystem and reads the spawned shot entity's components back out.
+private func simComponents(
+    _ input: String, obstacles: [(x: Double, y: Double, r: Double)]
+) throws -> (outcome: Int, hitSeat: Int, impactX: Double, impactY: Double) {
     let expression = try parseAndResolveExpression(input)
-    return simulateShot(
-        expression: expression, originX: -8, originY: 0, dir: 1,
-        shooterSeat: 0, cannons: testCannons, obstacles: obstacles
+    var world = makeTestWorld(obstacles: obstacles)
+    let shot = collisionSystem(
+        &world, expression: expression,
+        originX: -8, originY: 0, dir: 1, shooterSeat: 0
     )!
+    let o = world.outcome(of: shot)
+    let im = world.impact(of: shot)
+    return (o.value, im.seat, im.x, im.y)
 }
 
 @Test func simulateShotDetectsHitBlockedOut() throws {
     // Flat shot reaches the opponent at (8, 0).
-    let hit = try sim("0", obstacles: [])
+    let hit = try simComponents("0", obstacles: [])
     #expect(hit.outcome == 1 && hit.hitSeat == 1)
     // Same shot is stopped by an obstacle on the centerline first.
-    let blocked = try sim("0", obstacles: [Obstacle(x: 0, y: 0, r: 1.0)])
+    let blocked = try simComponents("0", obstacles: [(x: 0, y: 0, r: 1.0)])
     #expect(blocked.outcome == 2 && blocked.hitSeat == -1)
     // A steep line climbs off the field.
-    let out = try sim("x", obstacles: [])
+    let out = try simComponents("x", obstacles: [])
     #expect(out.outcome == 0 && out.hitSeat == -1)
 }
 
 @Test func simulateShotRejectsNonFiniteOrigin() throws {
-    // f(0) undefined (1/x → division by zero) ⇒ the shot can't start.
+    // f(0) undefined (1/x → division by zero) ⇒ no shot entity is spawned.
     let expression = try parseAndResolveExpression("1 / x")
-    #expect(simulateShot(expression: expression, originX: -8, originY: 0, dir: 1,
-                         shooterSeat: 0, cannons: testCannons, obstacles: []) == nil)
+    var world = makeTestWorld()
+    let shot = collisionSystem(
+        &world, expression: expression,
+        originX: -8, originY: 0, dir: 1, shooterSeat: 0
+    )
+    #expect(shot == nil)
+    #expect(!world.hasShot)
 }
 
 @Test func turnRotationSkipsDeadAndEmpty() {
@@ -494,15 +516,23 @@ private func sim(_ input: String, obstacles: [Obstacle]) throws -> ShotResult {
 }
 
 @Test func placePlayersIsDeterministicSpacedAndBounded() {
+    // Determinism on the raw layout (same PRNG order the FFI emits).
     let a = placePlayers(occupiedSeats: [0, 1, 2, 3], seed: 12345)
     let b = placePlayers(occupiedSeats: [0, 1, 2, 3], seed: 12345)
     #expect(a == b)                      // same seed ⇒ identical layout
     #expect(a.count == 8)
+
+    // The spawn system places one living cannon per occupied seat from that layout.
+    var world = World()
+    let layout = spawnPlayersSystem(&world, occupiedSeats: [0, 1, 2, 3], seed: 12345)
+    #expect(layout == a)
+    #expect(world.cannonCount == 4)
+
     var i = 0
     while i < 4 {
-        let x = a[i * 2], y = a[i * 2 + 1]
-        #expect(x >= GradGameWorld.xMin + 1.5 && x <= GradGameWorld.xMax - 1.5)
-        #expect(y >= GradGameWorld.yMin + 1.2 && y <= GradGameWorld.yMax - 1.2)
+        let p = world.position(ofCannon: world.cannonEntity(at: i))
+        #expect(p.x >= GradGameWorld.xMin + 1.5 && p.x <= GradGameWorld.xMax - 1.5)
+        #expect(p.y >= GradGameWorld.yMin + 1.2 && p.y <= GradGameWorld.yMax - 1.2)
         i += 1
     }
     // Pairwise separation holds (field is large enough for 4 with guard < 400).
@@ -510,10 +540,36 @@ private func sim(_ input: String, obstacles: [Obstacle]) throws -> ShotResult {
     while p < 4 {
         var q = p + 1
         while q < 4 {
-            let dx = a[p * 2] - a[q * 2], dy = a[p * 2 + 1] - a[q * 2 + 1]
+            let a0 = world.position(ofCannon: world.cannonEntity(at: p))
+            let a1 = world.position(ofCannon: world.cannonEntity(at: q))
+            let dx = a0.x - a1.x, dy = a0.y - a1.y
             #expect((dx * dx + dy * dy).squareRoot() >= kMinSeparation - 1e-9)
             q += 1
         }
         p += 1
     }
+}
+
+@Test func resampleSystemBuildsPolylineToEndX() throws {
+    // Flat arc rebuilt up to endX = 5; path is a non-empty even-length [x,y,…].
+    let expression = try parseAndResolveExpression("0")
+    var world = World()
+    let shot = resampleSystem(&world, expression: expression,
+                              originX: -8, originY: 0, dir: 1, endX: 5.0)!
+    let pts = world.trajectory(of: shot).points
+    #expect(pts.count >= 2 && pts.count % 2 == 0)
+    #expect(pts[pts.count - 2] <= 5.0 + kStep)   // stopped at/just past endX
+    // Non-finite f(0) ⇒ no entity spawned.
+    let bad = try parseAndResolveExpression("1 / x")
+    var w2 = World()
+    #expect(resampleSystem(&w2, expression: bad, originX: -8, originY: 0, dir: 1, endX: nil) == nil)
+}
+
+@Test func aimSystemFiresTowardNearestLivingOpponent() {
+    let world = makeTestWorld()          // seats 0,1 alive at x=-8 and x=8
+    #expect(aimSystem(world, originX: -8, originY: 0, shooterSeat: 0) == 1)  // toward +8
+    #expect(aimSystem(world, originX: 8, originY: 0, shooterSeat: 1) == -1)  // toward -8
+    var lone = World()
+    lone.spawnCannon(seat: 0, x: 0, y: 0, alive: true)  // no opponents ⇒ default +1
+    #expect(aimSystem(lone, originX: 0, originY: 0, shooterSeat: 0) == 1)
 }

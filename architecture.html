@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GradGame — Architecture, Algorithm &amp; Procedure</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --panel-2: #1c2230;
+    --ink: #e6edf3;
+    --muted: #9aa7b4;
+    --line: #2b3442;
+    --accent: #6366f1;   /* seat indigo */
+    --accent-2: #22d3ee; /* seat cyan   */
+    --warn: #f59e0b;
+    --ok: #34d399;
+    --code: #0b0f15;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 120px; }
+  header.hero {
+    padding: 64px 24px 40px; text-align: center;
+    background:
+      radial-gradient(900px 320px at 30% -10%, rgba(99,102,241,.20), transparent 60%),
+      radial-gradient(900px 320px at 80% 0%, rgba(34,211,238,.14), transparent 60%);
+    border-bottom: 1px solid var(--line);
+  }
+  header.hero h1 { margin: 0; font-size: 40px; letter-spacing: -0.5px; }
+  header.hero p { margin: 12px auto 0; max-width: 640px; color: var(--muted); font-size: 17px; }
+  .pill {
+    display: inline-block; margin-top: 18px; padding: 4px 12px; font-size: 12px;
+    font-family: var(--mono); color: var(--accent-2);
+    border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
+  }
+  nav.toc {
+    margin: 28px 0 8px; padding: 18px 22px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px;
+  }
+  nav.toc strong { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted); margin-bottom: 10px; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 36px; }
+  nav.toc a { color: var(--ink); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent-2); text-decoration: underline; }
+  h2 {
+    margin: 56px 0 6px; font-size: 27px; letter-spacing: -0.3px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--line);
+  }
+  h2 .n { color: var(--accent); font-family: var(--mono); font-size: 18px; margin-right: 10px; }
+  h3 { margin: 30px 0 4px; font-size: 19px; color: #f2f5f9; }
+  h4 { margin: 20px 0 2px; font-size: 15px; color: var(--accent-2); font-family: var(--mono); }
+  p { color: #d4dde6; }
+  .muted { color: var(--muted); }
+  code {
+    font-family: var(--mono); font-size: 13.5px;
+    background: var(--code); border: 1px solid var(--line);
+    border-radius: 6px; padding: 1px 6px; color: #c7d2fe;
+  }
+  pre {
+    background: var(--code); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; overflow-x: auto; font-family: var(--mono);
+    font-size: 13px; line-height: 1.6; color: #cdd9e5;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+  .kw { color: #ff7b72; } .ty { color: #79c0ff; } .fn { color: #d2a8ff; }
+  .st { color: #a5d6ff; } .cm { color: #8b949e; font-style: italic; } .nm { color: #f0c674; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 20px; margin: 16px 0;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px){ .grid2 { grid-template-columns: 1fr; } nav.toc ol { columns: 1; } }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  td code { font-size: 12.5px; }
+  .note { border-left: 3px solid var(--accent); background: var(--panel-2); padding: 12px 16px; border-radius: 0 10px 10px 0; margin: 16px 0; }
+  .warn { border-left-color: var(--warn); }
+  .note .lbl { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--warn); }
+  .note.accent .lbl { color: var(--accent-2); }
+
+  /* pipeline diagram */
+  .pipe { margin: 22px 0; }
+  .stage {
+    position: relative; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px 18px; margin: 0 auto; max-width: 720px;
+  }
+  .stage + .stage { margin-top: 34px; }
+  .stage + .stage::before {
+    content: "▼"; position: absolute; top: -28px; left: 50%; transform: translateX(-50%);
+    color: var(--accent); font-size: 14px;
+  }
+  .stage .h { display: flex; align-items: baseline; gap: 10px; }
+  .stage .h b { font-size: 15px; }
+  .stage .h span { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .stage .d { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+  .stage.io { background: linear-gradient(180deg, rgba(99,102,241,.12), transparent); border-style: dashed; }
+  .stage.fork { border-color: var(--accent-2); }
+
+  .layer { display: flex; gap: 10px; align-items: stretch; margin: 8px 0; flex-wrap: wrap; }
+  .box { flex: 1; min-width: 150px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .box .t { font-family: var(--mono); font-size: 12px; color: var(--accent-2); }
+  .box .s { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .tag { font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  footer { margin-top: 70px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; text-align: center; }
+  a.src { color: var(--accent-2); text-decoration: none; font-family: var(--mono); font-size: 12.5px; }
+  ul.tight { margin: 6px 0; } ul.tight li { margin: 3px 0; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>GradGame</h1>
+  <p>A static web page that lexes calculus-style expressions, differentiates and simplifies them symbolically, and renders the result as KaTeX <em>and</em> as evaluable JavaScript — with a Swift core compiled to WebAssembly. The same engine drives a multiplayer artillery game on a function graph.</p>
+  <span class="pill">Swift 6 → WebAssembly · recursive-descent parser · symbolic CAS · WebGPU · Firebase RTDB</span>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#overview">System overview</a></li>
+    <li><a href="#layers">Component layers</a></li>
+    <li><a href="#algorithm">The core algorithm (pipeline)</a></li>
+    <li><a href="#ast">Data structures (the AST)</a></li>
+    <li><a href="#lexer">Stage 1 — Lexer</a></li>
+    <li><a href="#parser">Stage 2 — Parser</a></li>
+    <li><a href="#diff">Stage 3 — Differentiator</a></li>
+    <li><a href="#simplify">Stage 4 — Simplifier</a></li>
+    <li><a href="#render">Stage 5 — Renderers</a></li>
+    <li><a href="#game">The game engine</a></li>
+    <li><a href="#ffi">Procedure — the wasm FFI boundary</a></li>
+    <li><a href="#frontend">Procedure — frontend glue</a></li>
+    <li><a href="#wasm-notes">wasm constraints</a></li>
+    <li><a href="#build">Build &amp; run procedure</a></li>
+  </ol>
+</nav>
+
+<!-- ───────────────────────────── OVERVIEW ───────────────────────────── -->
+<h2 id="overview"><span class="n">01</span>System overview</h2>
+<p>
+  GradGame is served entirely as static files — there is no backend application server.
+  The interesting logic (parsing, differentiation, algebraic simplification, two code
+  generators, and a deterministic game simulation) lives in a <strong>Swift package</strong>
+  under <code>.src/</code> that is compiled to a single <code>GradGame.wasm</code> module.
+  The browser loads that module and talks to it across a small, hand-written
+  C-ABI memory protocol. Everything at the repo root is the served frontend.
+</p>
+
+<div class="card">
+  <div class="layer">
+    <div class="box"><div class="t">Browser (JS)</div><div class="s">DOM, KaTeX, WebGPU canvas, Firebase, event wiring</div></div>
+    <div class="box"><div class="t">FFI boundary</div><div class="s">encode → call → decode → free over linear memory</div></div>
+    <div class="box"><div class="t">Swift core (wasm)</div><div class="s">lexer · parser · differentiator · simplifier · renderers · game engine</div></div>
+  </div>
+  <p class="muted" style="margin:8px 2px 0;font-size:13px">
+    The boundary is deliberately tiny and C-compatible: all exported entry points take and return
+    <code>Int32</code> / pointers, never Swift types. Strings cross as <code>(pointer, length)</code> pairs in the module's linear memory.
+  </p>
+</div>
+
+<!-- ───────────────────────────── LAYERS ───────────────────────────── -->
+<h2 id="layers"><span class="n">02</span>Component layers</h2>
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>index.html</code> / <code>style.css</code></td><td>Page shell, expression input, result panels, help &amp; history UI, game overlay.</td></tr>
+  <tr><td><code>gradgame-wasm.js</code></td><td>Instantiates the module (with a <code>wasi_snapshot_preview1</code> stub), drives every FFI call, renders TeX via KaTeX, debounces input (120&nbsp;ms), and installs the global engine API. Hosts the trap-recovery backstop.</td></tr>
+  <tr><td><code>gradgame-graph.js</code></td><td>WebGPU renderer: the function grapher and the game battlefield (cannons, obstacles, trajectory arcs).</td></tr>
+  <tr><td><code>gradgame-game.js</code></td><td>Graph&nbsp;War game controller (ES module): turn logic, aiming, Firebase&nbsp;RTDB multiplayer sync. Calls the engine via <code>window.gradGameEngine</code>.</td></tr>
+  <tr><td><code>gradgame-help.js</code> / <code>gradgame-history.js</code></td><td>Help popup (fetches example/operation text files) and the rolling expression history panel.</td></tr>
+  <tr><td><code>GradGame.wasm</code></td><td>The compiled Swift core (built artifact, committed so GitHub Pages can serve it).</td></tr>
+  <tr><td><code>.src/Sources/GradGame/*.swift</code></td><td>The Swift package — kept under a dot-directory so Pages does not serve the source.</td></tr>
+</table>
+<p class="muted">
+  Four scripts load as classic <code>&lt;script defer&gt;</code> and coordinate through <code>window.*</code> globals
+  (<code>gradGameReady</code>, <code>gradGameEngine</code>, <code>gradGameParse</code>, <code>gradGameConfig</code>);
+  <code>gradgame-game.js</code> is dynamically <code>import()</code>ed as a module. There is no bundler or build step on the JS side.
+</p>
+
+<!-- ───────────────────────────── ALGORITHM ───────────────────────────── -->
+<h2 id="algorithm"><span class="n">03</span>The core algorithm — a compilation pipeline</h2>
+<p>
+  Turning a typed string like <code>dx sin(x^2)</code> into rendered math and runnable code is a
+  textbook five-stage compiler pipeline. Each stage is a pure transformation over a shared
+  tree (the <a href="#ast">AST</a>); every stage recurses over that tree, which is why a hard
+  size cap exists (see <a href="#parser">Stage&nbsp;2</a>).
+</p>
+
+<div class="pipe">
+  <div class="stage io">
+    <div class="h"><b>Input</b><span>String</span></div>
+    <div class="d">e.g. <code>dx sin(x^2)</code> — raw UTF-8 text from the expression box.</div>
+  </div>
+  <div class="stage">
+    <div class="h"><b>1 · Lexer</b><span>Expression+Lexer.swift</span></div>
+    <div class="d"><code>bytes → [Token]</code>. Scans UTF-8 bytes into numbers, identifiers, operators, parens, commas.</div>
+  </div>
+  <div class="stage">
+    <div class="h"><b>2 · Parser</b><span>Expression+Parser.swift</span></div>
+    <div class="d"><code>[Token] → Expression</code>. Recursive descent with operator precedence; builds the AST; enforces the 256-token cap.</div>
+  </div>
+  <div class="stage">
+    <div class="h"><b>3 · Differentiator</b><span>Operator+Differentiator.swift</span></div>
+    <div class="d">Replaces every <code>dx</code>/<code>dy</code> node with its symbolic derivative via the sum/product/quotient/power/chain rules, then canonicalizes.</div>
+  </div>
+  <div class="stage">
+    <div class="h"><b>4 · Simplifier</b><span>Operator+Simplifier.swift</span><span class="tag">optional</span></div>
+    <div class="d">CAS-style canonicalization: constant folding, like-term collection, common-factor factoring, exact rational coefficients.</div>
+  </div>
+  <div class="stage fork">
+    <div class="h"><b>5 · Renderers</b><span>Renderer+TeX.swift · Renderer+JavaScript.swift</span></div>
+    <div class="d">One AST → two outputs: a KaTeX string for display and an evaluable JavaScript string for the live numeric result.</div>
+  </div>
+  <div class="stage io">
+    <div class="h"><b>Output</b><span>TeX &amp; JS</span></div>
+    <div class="d"><code>2 x \cos\left(x^{2}\right)</code> &nbsp;·&nbsp; <code>2 * x * Math.cos(Math.pow(x, 2))</code></div>
+  </div>
+</div>
+
+<p class="muted">The same parse-and-resolve front half also feeds the <a href="#game">game engine</a>: <code>parseAndResolveExpression</code> produces an AST that <code>evaluate(x:y:)</code> walks numerically during the trajectory sweep, so the curve a player fires <em>is</em> the curve the renderer drew.</p>
+
+<!-- ───────────────────────────── AST ───────────────────────────── -->
+<h2 id="ast"><span class="n">04</span>Data structures — the AST</h2>
+<p>
+  Every stage reads and writes one shared type: an <code>indirect enum</code> (a heap-boxed,
+  recursive sum type). Numbers are kept as <strong>strings</strong>, never parsed to a fixed-width
+  integer, so values far beyond <code>Int32.max</code> survive untouched until a renderer formats them.
+</p>
+<pre><code><span class="kw">indirect enum</span> <span class="ty">Expression</span>: <span class="ty">Equatable</span> {
+    <span class="kw">case</span> number(<span class="ty">String</span>)                 <span class="cm">// "2", "3.14", "100000000000"</span>
+    <span class="kw">case</span> variable(<span class="ty">String</span>)               <span class="cm">// "x" or "y"</span>
+    <span class="kw">case</span> constant(<span class="ty">String</span>)               <span class="cm">// "pi", "e", "phi", "gamma"</span>
+    <span class="kw">case</span> unary(<span class="ty">UnaryOperator</span>, <span class="ty">Expression</span>)                <span class="cm">// +x, -x</span>
+    <span class="kw">case</span> binary(<span class="ty">BinaryOperator</span>, <span class="ty">Expression</span>, <span class="ty">Expression</span>)  <span class="cm">// a + b, a^b …</span>
+    <span class="kw">case</span> function(name: <span class="ty">String</span>, argument: <span class="ty">Expression</span>,
+                  exponent: <span class="ty">Expression</span>?, parenthesized: <span class="ty">Bool</span>)  <span class="cm">// sin^2(x)</span>
+    <span class="kw">case</span> derivative(variable: <span class="ty">String</span>, argument: <span class="ty">Expression</span>,
+                    parenthesized: <span class="ty">Bool</span>)   <span class="cm">// dx(...) — resolved away by stage 3</span>
+}
+
+<span class="kw">enum</span> <span class="ty">BinaryOperator</span> { <span class="kw">case</span> add, subtract, multiply, implicitMultiply, divide, power }</code></pre>
+<div class="note accent">
+  <span class="lbl">Why a separate <code>implicitMultiply</code></span>
+  <p style="margin:6px 0 0">Juxtaposition (<code>2 x</code>, <code>x sin(x)</code>) parses to <code>.implicitMultiply</code>, distinct from an explicit <code>*</code>. The renderers exploit the difference: TeX prints implicit products with a thin space (<code>2 x</code>) and explicit ones with <code>\times</code>.</p>
+</div>
+<p>Supporting numeric types live alongside: <code>DecimalValue</code> (a mantissa&nbsp;×&nbsp;10<sup>exp</sup> form used for overflow-safe folding) and <code>Rational</code> (an exact <code>numerator/denominator</code> coefficient so the simplifier can fold <code>2/3 · 4/5 → 8/15</code>).</p>
+
+<!-- ───────────────────────────── LEXER ───────────────────────────── -->
+<h2 id="lexer"><span class="n">05</span>Stage 1 — Lexer</h2>
+<p>The lexer walks the input as a <code>[UInt8]</code> byte array (UTF-8) with a single index, emitting a flat token list terminated by <code>.end</code>.</p>
+<h4>Procedure</h4>
+<ul class="tight">
+  <li>Skip whitespace (space, tab, CR, LF).</li>
+  <li>Single-byte punctuation → its token: <code>+ - * / ^ , ( )</code>.</li>
+  <li>A digit or <code>.</code> starts a <strong>number</strong>: consume digits and at most one decimal point. At least one digit must appear, else error.</li>
+  <li>A letter <code>[A–Za–z]</code> starts an <strong>identifier</strong>: consume consecutive letters.</li>
+  <li>Anything else → <code>unexpectedCharacter</code>.</li>
+</ul>
+<div class="note warn">
+  <span class="lbl">No E-notation</span>
+  <p style="margin:6px 0 0"><code>2E3</code> does not lex as a single number — it becomes <code>2</code>, identifier <code>E</code>, <code>3</code>, which the parser rejects. Write a power of ten explicitly: <code>2 10^3</code>. (Lowercase <code>e</code> is Euler's constant.)</p>
+</div>
+<p class="muted">Tokens: <code>number(String)</code>, <code>identifier(String)</code>, <code>plus</code>, <code>minus</code>, <code>star</code>, <code>slash</code>, <code>caret</code>, <code>comma</code>, <code>leftParenthesis</code>, <code>rightParenthesis</code>, <code>end</code>.</p>
+
+<!-- ───────────────────────────── PARSER ───────────────────────────── -->
+<h2 id="parser"><span class="n">06</span>Stage 2 — Parser</h2>
+<p>
+  A classic <strong>recursive-descent</strong> parser, one function per precedence level. Lower-precedence
+  rules call higher ones, so binding strength falls out of the call structure. The grammar (lowest to highest precedence):
+</p>
+<pre><code><span class="fn">parseAddition</span>       → parseMultiplication ( ('+' | '-') parseMultiplication )*      <span class="cm">// left-assoc</span>
+<span class="fn">parseMultiplication</span> → parseUnary ( ('*' | '/' | <span class="nm">implicit</span>) parseUnary )*            <span class="cm">// left-assoc</span>
+<span class="fn">parseUnary</span>          → ('+' | '-') parseUnary | parsePower
+<span class="fn">parsePower</span>          → parsePrimary ( '^' parseUnary )?                            <span class="cm">// right-assoc exponent</span>
+<span class="fn">parsePrimary</span>        → number | identifier-form | '(' parseAddition ')'</code></pre>
+<table>
+  <tr><th>Form</th><th>Recognized as</th></tr>
+  <tr><td><code>x</code>, <code>y</code></td><td>variable</td></tr>
+  <tr><td><code>pi</code>, <code>e</code>, <code>phi</code>, <code>gamma</code></td><td>constant</td></tr>
+  <tr><td><code>sin cos tan sec csc cot sinh cosh tanh exp log sqrt</code></td><td>unary function — supports <code>sin^2 x</code> and bare-argument <code>sin x</code></td></tr>
+  <tr><td><code>pow(a, b)</code></td><td>desugars to <code>.binary(.power, a, b)</code></td></tr>
+  <tr><td><code>dx</code>, <code>dy</code></td><td>derivative operator — <code>dx(f)</code> or bare <code>dx f</code></td></tr>
+  <tr><td>juxtaposition <code>2 x</code>, <code>x(y+1)</code></td><td><code>.implicitMultiply</code></td></tr>
+</table>
+<div class="note">
+  <span class="lbl">Recursion depth = expression size</span>
+  <p style="margin:6px 0 0">
+    Parsing, simplification, and both renderers all recurse over the tree, and the wasm stack is small.
+    The parser caps input at <code>maximumTokenCount = 256</code> and throws <code>expressionTooComplex</code>
+    rather than overflowing the stack. Bounding tokens bounds every later stage's recursion depth — this guard is load-bearing.
+  </p>
+</div>
+
+<!-- ───────────────────────────── DIFFERENTIATOR ───────────────────────────── -->
+<h2 id="diff"><span class="n">07</span>Stage 3 — Differentiator</h2>
+<p>
+  <code>resolve()</code> walks the tree and replaces every <code>derivative</code> node with the actual
+  derivative of its argument, then hands that raw result to the simplifier. The rules are the standard
+  calculus identities — themselves the core algebraic properties applied to <code>d/dv</code>:
+</p>
+<div class="grid2">
+  <div class="card">
+    <h4>Rules applied</h4>
+    <ul class="tight">
+      <li><b>Linearity:</b> <code>d(f ± g) = df ± dg</code></li>
+      <li><b>Product:</b> <code>d(f·g) = df·g + f·dg</code></li>
+      <li><b>Quotient:</b> <code>d(f/g) = (df·g − f·dg) / g²</code></li>
+      <li><b>Power:</b> <code>d(fⁿ) = n·fⁿ⁻¹·df</code></li>
+      <li><b>Exponential:</b> <code>d(eᵘ) = eᵘ·du</code></li>
+      <li><b>Chain:</b> <code>d(F(u)) = F'(u)·du</code></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>Partial derivatives</h4>
+    <p style="margin:4px 0 0;font-size:14px">
+      <code>dx</code> holds <code>y</code> (and every symbolic constant <code>e, pi, phi, gamma</code>) constant — their
+      derivative is <code>0</code>; <code>dy</code> holds <code>x</code> constant likewise. A built-in
+      <code>dependsOn()</code> traversal decides whether a sub-tree varies in the differentiation variable,
+      which selects the power vs. exponential vs. symbolic branch.
+    </p>
+  </div>
+</div>
+<div class="note warn">
+  <span class="lbl">The one case left symbolic</span>
+  <p style="margin:6px 0 0">
+    A derivative that genuinely needs a logarithm — a non-<code>e</code> base with a variable exponent
+    (<code>2^x</code>) or a variable base <em>and</em> exponent (<code>x^x</code>) — is deliberately
+    <strong>not</strong> resolved. It stays a <code>derivative</code> node: the TeX renderer shows ∂-notation,
+    and the JS renderer falls back to a numeric central difference.
+  </p>
+</div>
+
+<!-- ───────────────────────────── SIMPLIFIER ───────────────────────────── -->
+<h2 id="simplify"><span class="n">08</span>Stage 4 — Simplifier</h2>
+<p>
+  A deliberately <em>scoped</em> computer-algebra system (run unconditionally after differentiation, and
+  again when the user asks for a simplified display). It applies the three core algebraic properties:
+</p>
+<table>
+  <tr><th>Property</th><th>What it does</th></tr>
+  <tr><td>Commutative</td><td>Canonical ordering of terms/factors via parallel <code>[String]</code> sort keys + a manual insertion sort.</td></tr>
+  <tr><td>Associative</td><td>Flattens nested <code>+</code>/<code>·</code> into n-ary groups, then collects like terms and merges repeated bases into powers.</td></tr>
+  <tr><td>Distributive</td><td>Factors out a common factor (the numeric GCD of coefficients plus shared symbolic bases at their minimum exponent).</td></tr>
+</table>
+<h4>Numeric folding</h4>
+<ul class="tight">
+  <li>Integer constants fold only within <strong>float32 range</strong> (decimal exponent ≤ 38); a larger magnitude stays symbolic, and a magnitude below 10<sup>-39</sup> underflows to exact zero.</li>
+  <li>Overflow is detected with a <code>Double</code>-magnitude check plus wrapping <code>&amp;*</code>/<code>&amp;+</code> — never the stdlib reporting-overflow APIs (they trap on this wasm SDK).</li>
+  <li>Coefficients are exact rationals (<code>Rational</code> over <code>DecimalValue</code>): <code>4x/2 → 2x</code>, <code>6/4 → 3/2</code>.</li>
+</ul>
+<div class="note accent">
+  <span class="lbl">Division by zero throws</span>
+  <p style="margin:6px 0 0">
+    <code>c / 0</code> for a non-zero numerator throws <code>divisionByZero</code>; <code>0 / 0</code> throws
+    <code>notANumber</code>. (Earlier this folded to an internal <code>infinity</code> constant, but a later
+    <code>0 · e → 0</code> rule could swallow it, so <code>1 / 0 · 0</code> wrongly became <code>0</code>.) Surfacing
+    these as thrown errors keeps the simplifier from carrying a value downstream rules must each special-case.
+  </p>
+</div>
+
+<!-- ───────────────────────────── RENDERERS ───────────────────────────── -->
+<h2 id="render"><span class="n">09</span>Stage 5 — Renderers</h2>
+<p>Two renderers walk the same AST and emit two strings. Both decide parenthesization from a single shared module, <code>Renderer+Precedence.swift</code>, so the TeX and JS outputs always agree on grouping — only the delimiters and spellings differ.</p>
+<div class="grid2">
+  <div class="card">
+    <h4>TeXRenderer → KaTeX</h4>
+    <ul class="tight">
+      <li>Builds macros: <code>\frac{}{}</code>, <code>\sqrt{}</code>, <code>\times</code>, <code>\cos</code>, ∂-notation.</li>
+      <li>Implicit products print as a thin space; explicit as <code>\times</code>.</li>
+      <li><code>renderNumber</code> formats huge values as <code>mantissa \times 10^{exp}</code> by scanning digit bytes — no overflow.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>JavaScriptRenderer → eval string</h4>
+    <ul class="tight">
+      <li>Emits <code>Math.sin</code>, <code>Math.pow</code>, <code>Math.PI</code>, etc.</li>
+      <li>The page <code>eval</code>s it with the current <code>x</code>, <code>y</code> for a live numeric result.</li>
+      <li>For the symbolic-derivative fallback it emits a small central-difference closure.</li>
+    </ul>
+  </div>
+</div>
+<h4>Shared precedence &amp; parenthesization</h4>
+<pre><code><span class="cm">// Renderer+Precedence.swift — one source of truth for both renderers</span>
+atoms / functions ............ <span class="nm">5</span>
+power  (^) ................... <span class="nm">4</span>
+unary  (+ -) ................. <span class="nm">3</span>
+multiply / implicit / divide . <span class="nm">2</span>
+add / subtract ............... <span class="nm">1</span>
+
+<span class="cm">// A child wraps in parens when it binds looser than its parent, OR when it is an</span>
+<span class="cm">// equal-precedence right operand of a non-associative operator (-, /, ^):</span>
+<span class="fn">needsParentheses</span>(child, parentPrecedence, position) → <span class="ty">Bool</span></code></pre>
+
+<!-- ───────────────────────────── GAME ENGINE ───────────────────────────── -->
+<h2 id="game"><span class="n">10</span>The game engine — "Graph War"</h2>
+<p>
+  The front half of the pipeline (parse + resolve) also powers an artillery game: players are cannons on a
+  battlefield, and a turn fires the player's expression as a curve. The engine is pure Swift math over the AST
+  (no DOM/Firebase), unit-testable on the host and exposed to JS through its own FFI exports.
+</p>
+<h3>Trajectory simulation (<code>simulateShot</code>)</h3>
+<pre><code><span class="cm">// Normalize so the arc passes through the firing cannon:</span>
+offset = expression.<span class="fn">evaluate</span>(x: 0, y: 0)        <span class="cm">// nil-out the shot if f(0) is non-finite</span>
+f(s)   = expression.<span class="fn">evaluate</span>(x: s, y: 0) − offset
+
+<span class="kw">for</span> each step (x advances by dir · <span class="nm">kStep</span>=0.03 from the cannon):
+    wy = originY + f(x − originX)
+    <span class="kw">if</span> x left the field .......................→ outcome = <span class="nm">OUT</span>
+    <span class="kw">if</span> within <span class="nm">kCannonRadius</span>(0.55) of a live enemy → outcome = <span class="nm">HIT</span>  (record seat)
+    <span class="kw">if</span> within an obstacle radius ...............→ outcome = <span class="nm">BLOCKED</span>
+    <span class="cm">// collisions ignored within kMuzzleClearance (0.7) of the firer</span>
+    record (round3(x), round3(wy)) into the flat path [x0,y0,x1,y1,…]</code></pre>
+<p class="muted">
+  <code>round3</code> rounds exactly like JS <code>Math.round</code> (<code>floor(v·1000 + 0.5)/1000</code>) so paths match the
+  original JavaScript engine bit-for-bit. <code>resampleArc</code> rebuilds just the visible polyline (no collision tests)
+  up to the recorded impact, so every client redraws the same arc regardless of since-changed state — the shot itself stores no path.
+</p>
+<h3>Deterministic setup</h3>
+<p>
+  Board layout is reproducible from a seed via a 31-bit LCG (glibc constants, wrapping <code>&amp;*</code>/<code>&amp;+</code>
+  masked to <code>0x7FFFFFFF</code>) so it behaves identically on the host (64-bit <code>Int</code>) and wasm (32-bit <code>Int</code>):
+  <code>placePlayers</code> spaces cannons ≥&nbsp;5 units apart, and <code>generateObstacles</code> drops 3–6 circles avoiding cannons.
+  Seats and turn order are tracked as bitmasks (<code>aliveCount</code>, <code>nextAliveSeat</code>).
+</p>
+
+<!-- ───────────────────────────── FFI ───────────────────────────── -->
+<h2 id="ffi"><span class="n">11</span>Procedure — the wasm FFI boundary</h2>
+<p>
+  The browser cannot hand a Swift <code>String</code> to wasm, so there is a manual memory protocol.
+  Exported functions are marked <code>@_expose(wasm,&nbsp;…)</code> + <code>@_cdecl</code> and only speak
+  <code>Int32</code> / pointers.
+</p>
+<h3>The string call dance (parser exports)</h3>
+<pre><code><span class="cm">// JS side, for parseExpressionToTex / parseExpressionToJavaScript:</span>
+<span class="nm">1.</span> ptr = <span class="fn">gradGameAllocate</span>(utf8.length)          <span class="cm">// reserve linear memory</span>
+<span class="nm">2.</span> copy the UTF-8 bytes into memory at ptr
+<span class="nm">3.</span> resultPtr = <span class="fn">parseExpressionToTex</span>(ptr, len, simplify)
+<span class="nm">4.</span> len  = <span class="fn">gradGameLastResultLength</span>()           <span class="cm">// result stashed in module globals</span>
+<span class="nm">5.</span> ok   = <span class="fn">gradGameLastParseSucceeded</span>()         <span class="cm">// 1 = parsed, 0 = error string</span>
+<span class="nm">6.</span> decode UTF-8 at (resultPtr, len)
+<span class="nm">7.</span> <span class="fn">gradGameFreeLastResult</span>()  and  <span class="fn">gradGameDeallocate</span>(ptr, len)</code></pre>
+<p class="muted">On any parse error the export still returns a string — the human-readable <code>ExpressionParserError.description</code> — with the "succeeded" flag set to 0, so a bad input is shown as a message and never traps the instance.</p>
+
+<h3>Exported entry points</h3>
+<table>
+  <tr><th>Export</th><th>Purpose</th></tr>
+  <tr><td><code>gradGameAllocate</code> / <code>gradGameDeallocate</code></td><td>Reserve / free a byte buffer in linear memory.</td></tr>
+  <tr><td><code>parseExpressionToTex(ptr,len,simplify)</code></td><td>AST → KaTeX string (optionally simplified).</td></tr>
+  <tr><td><code>parseExpressionToJavaScript(ptr,len)</code></td><td>AST → evaluable JS string.</td></tr>
+  <tr><td><code>gradGameLastResultLength</code> / <code>…LastParseSucceeded</code> / <code>…FreeLastResult</code></td><td>Read back the stashed result's length / status, then free it.</td></tr>
+  <tr><td><code>gradGameEvalAt(ptr,len,x,y)</code></td><td>Parse + resolve + evaluate <code>f(x,y)</code> → <code>Double</code>.</td></tr>
+  <tr><td><code>gradGameAllocF64</code> / <code>gradGameFreeF64</code></td><td>8-aligned f64 buffers for cannon/obstacle/position arrays.</td></tr>
+  <tr><td><code>gradGameSimulateShot(…)</code></td><td>Run a shot; returns outcome (0&nbsp;out / 1&nbsp;hit / 2&nbsp;blocked), pushes path back via the host callback.</td></tr>
+  <tr><td><code>gradGameResampleArc(…)</code></td><td>Rebuild a shot's visible polyline up to its impact x.</td></tr>
+  <tr><td><code>gradGameAimDirection</code> · <code>gradGamePlacePlayers</code> · <code>gradGameGenerateObstacles</code> · <code>gradGameNextAliveSeat</code> · <code>gradGameAliveCount</code></td><td>Aiming, deterministic placement, obstacle generation, turn rotation.</td></tr>
+  <tr><td><code>gradGameFirebaseConfig</code> / <code>…ConfigLength</code></td><td>Firebase config, embedded in the binary and read at boot (kept out of the HTML).</td></tr>
+  <tr><td><code>add(2,3)</code> · <code>mathSmoke(x)</code></td><td>Startup smoke tests — a poisoned instance or a missing libm symbol traps here, cleanly.</td></tr>
+</table>
+<div class="note accent">
+  <span class="lbl">Array results — host callback, not a buffer</span>
+  <p style="margin:6px 0 0">
+    Array results (trajectory paths, placements, obstacles) are <strong>pushed</strong> back through a host import
+    <code>gradgame.gradGameEmitResult(outcome, hitSeat, impactX, impactY, pathPtr, pathCount)</code> that JS supplies at
+    instantiation. The path pointer is valid only during the call, so JS copies it out synchronously. Omit this import and
+    <code>WebAssembly.instantiate</code> raises a <code>LinkError</code>.
+  </p>
+</div>
+
+<!-- ───────────────────────────── FRONTEND ───────────────────────────── -->
+<h2 id="frontend"><span class="n">12</span>Procedure — frontend glue</h2>
+<ul class="tight">
+  <li><b>Boot:</b> <code>gradgame-wasm.js</code> fetches and instantiates <code>GradGame.wasm</code> with a <code>wasi_snapshot_preview1</code> stub and the <code>gradgame</code> import module, runs the <code>add(2,3)</code> smoke test, then resolves <code>window.gradGameReady</code> and installs <code>window.gradGameEngine</code> / <code>gradGameParse</code> / <code>gradGameConfig</code>.</li>
+  <li><b>Live render:</b> input is <strong>debounced ~120&nbsp;ms</strong> (<code>scheduleRender</code>); each render does the call dance, hands the TeX to KaTeX, and <code>eval</code>s the JS form to show <code>f(x,y)</code>.</li>
+  <li><b>Trap recovery:</b> a trapped call throws a <code>WasmTrapError</code> and triggers <code>recoverWasm()</code>, which rebuilds a fresh instance from the cached <code>Module</code>. This is a <em>backstop</em> — the real fix for any freeze is preventing the Swift-side trap.</li>
+  <li><b>Game loop:</b> <code>gradgame-graph.js</code> draws the grapher/battlefield on a WebGPU canvas; <code>gradgame-game.js</code> drives turns and syncs state over Firebase RTDB. Writes are client-authoritative (a client may write another player's seat), and <code>resampleArc</code> lets every client reproduce a shot's arc without storing the path.</li>
+</ul>
+
+<!-- ───────────────────────────── WASM NOTES ───────────────────────────── -->
+<h2 id="wasm-notes"><span class="n">13</span>wasm constraints (why the Swift looks the way it does)</h2>
+<p>
+  On wasm32, Swift's <code>Int</code> is <strong>32-bit</strong>; on the host it is 64-bit. More importantly, the
+  <code>swift-6.3.2-RELEASE_wasm</code> SDK fails to resolve certain runtime metadata, so code that passes host
+  tests can still <strong>hard-crash the wasm instance</strong> (an <code>unreachable</code> trap that freezes the input box).
+  These patterns are avoided throughout <code>.src</code>:
+</p>
+<table>
+  <tr><th>Avoid (traps on wasm)</th><th>Use instead</th></tr>
+  <tr><td><code>Int32</code>/<code>Int64</code>/<code>UInt</code> string interpolation, <code>.magnitude</code> interpolation</td><td><code>Int</code> bounded to ±<code>Int32.max</code> so host and wasm agree</td></tr>
+  <tr><td><code>for x in someString.utf8</code> and other <code>Sequence</code> for-in</td><td><code>let bytes = Array(text.utf8)</code> + a <code>while</code> index loop</td></tr>
+  <tr><td>Generic <code>Array</code> <code>map</code>/<code>sorted(by:)</code>/<code>flatMap</code>/<code>firstIndex(where:)</code>/<code>+</code></td><td>Manual index loops &amp; insertion sort with parallel <code>[String]</code> keys</td></tr>
+  <tr><td>Stdlib reporting-overflow (<code>multipliedReportingOverflow</code>, …)</td><td><code>Double</code>-magnitude check + wrapping <code>&amp;*</code>/<code>&amp;+</code></td></tr>
+</table>
+<p class="muted">Host unit tests are fast but cannot reproduce wasm-only traps, so behavior is always verified against the actual <code>GradGame.wasm</code> via a Node harness in addition to <code>swift test</code>.</p>
+
+<!-- ───────────────────────────── BUILD ───────────────────────────── -->
+<h2 id="build"><span class="n">14</span>Build &amp; run procedure</h2>
+<pre><code><span class="cm"># Host unit tests (Swift Testing). Fast, but does NOT catch wasm-only traps.</span>
+swift test --package-path .src --scratch-path .build
+
+<span class="cm"># Build the wasm artifact, then copy it to where index.html fetches it.</span>
+swift build --package-path .src --scratch-path .build --swift-sdk swift-6.3.2-RELEASE_wasm
+cp .build/wasm32-unknown-wasip1/debug/GradGame.wasm GradGame.wasm
+
+<span class="cm"># Serve from the repo root (the page fetches GradGame.wasm — file:// will not work).</span>
+bunx serve . -l 8000</code></pre>
+<p class="muted">After rebuilding <code>GradGame.wasm</code>, hard-reload the page (⌘⇧R) to bypass the browser cache.</p>
+
+<footer>
+  GradGame · architecture reference · generated from the source under
+  <a class="src" href="https://github.com/tirdon/GradGame">.src/Sources/GradGame</a>
+</footer>
+
+</div>
+</body>
+</html>
